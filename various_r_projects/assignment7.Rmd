@@ -1,0 +1,231 @@
+---
+title: "Assignment 1"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+##### Kai Bagley - 21984315
+\
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      tidy = TRUE)
+```
+
+```{r, results='hide'}
+library("tidyverse")
+library("ISLR2")
+library("GGally")
+library("patchwork")
+library("MASS")
+```
+
+#### Question 1
+\
+
+Consider Q2, section 3.7, p121. You may find section 2.5 p105ff useful.
+\
+
+The question is as follows:
+*Carefully explain the differences between the KNN classifier and KNN regression methods*
+
+KNN regression first finds K observations that are closest to a prediction point $x_0$, then it estimates the predicted value $f(x_0)$. $f(x_0)$ is equal to the mean of the K points close to $x_0$.
+
+KNN classification finds K points that are closest to $x_0$. Then it estimates a probability for class 1 as the fraction of the K points close to $x_0$ that are of class 1. $x_0$ is then classified as the class with the largest probability.
+
+#### Question 2
+\
+
+Consider a 2-class confusion matrix
+
+
+##### (a) Explain the two ways an incorrect classification can be made and why it may be important to make a distinction between the two types of error.
+\
+
+There are false positives (FP), and false negatives (FN). False positives are observations from a negative class, incorrectly classified as a positive, and false negatives are positives incorrectly classified as negatives.
+
+The difference between these two misclassifications is useful as we can calculate important metrics such as miss-rate, etc. Becomes even more important when doing multiclass classification as we can then calculate these metrics between different classes. Changing the classifier to reduce the FP rate, increases the FN rate, and vice versa. It is important to try and optimise the classifier parameters to get the best ratio of both.
+
+
+##### (b) Describe briefly a scenario in which it does matter which of the two errors have been made.
+\
+
+It is important in reality, as a FN may mean someone who is guilty of a crime may not be convicted, and a FP would mean an innocent person gets sentenced.
+
+
+##### (c) Assume we have the confusion matrix of a 2-class problem obtained from the training data. Describe and give reasons for the change (including the direction of change - positive or negative) you would expect to see when you calculate a confusion matrix for the testing data.
+\
+
+We would expect to see a lower TP and TN count, and higher FP and FN count. The training data should always be classified correctly more often, as it is the data the classifier is trained on. The test data is completely fresh, unseen data for the classifier, so it will be less reliable on it.
+
+
+#### Question 3
+\
+
+Use the `Auto` data from Lab 1, which is described in Section 2.3.4 p48ff, and follow the description of how to remove observations with missing values. Continue with the remaining observations without missing values and call the data set the cleaned data.
+
+`Auto` data set exists already in the library "ISLR2", so we drop any of the NA entries using `na.omit`.
+
+```{r}
+Auto <- Auto %>% na.omit
+```
+
+##### (a) How many observations are in the clean data? Divide these into two groups: The first half (by year) and the remaining record. Consider the first record of the second half and list the value of `acceleration`.
+\
+
+```{r}
+dim(Auto)
+```
+
+There are 9 columns, and 392 observations in the cleaned data set.
+
+```{r}
+# Order by year
+Auto.ordered <- Auto[order(Auto$year),]
+
+Auto1 <- Auto.ordered[1:(nrow(Auto.ordered)/2),]
+Auto2 <- Auto.ordered[(nrow(Auto.ordered)/2+1):nrow(Auto.ordered),]
+
+Auto2[1, "acceleration"]
+```
+
+##### (b) For each half of the cleaned data, display a parallel coordinate plot for the first 7 variables. Compare the plots and comment on the similarities and differences.
+\
+
+```{r, fig.width=6, fig.height=7.5}
+plt3.b.1 <- ggparcoord(Auto1, 
+                       columns=c(1:7))
+plt3.b.2 <- ggparcoord(Auto2, 
+                       columns=c(1:7))
+
+print(plt3.b.1 / plt3.b.2)
+```
+
+Looking at the above parallel coordinate plots, it looks like for both data sets, lower `mpg` corresponds to more `cylinders` and vice versa. The parallel coordinate lines get messy after this, but for both it also looks like there's an inverse relationship between `weight` and `acceleration`.
+
+##### (c) Using all observations of the cleaned data. Use `acceleration` as the response and `displacement`, `horsepower`, `weight`, and `mpg`, as predictor variables. Conduct a linear regression with pairwise interactions between `horsepower` and `weight`, and `mpg` and `weight`. State which of these interaction terms will need to be included into the model based on a 5% significance level.
+\
+
+We use `glm` with the variables in question:
+
+```{r}
+auto.lm <- glm(acceleration~(horsepower+mpg)*weight+displacement, data=Auto)
+
+summary(auto.lm)
+```
+
+Both of the interaction terms are significant at the %5 significance level. Therefore they both should be included in the model.
+
+##### (d) Write down the expression for the final model derived in part (c) and comment.
+\
+
+The model derived is:
+
+\[
+\begin{aligned}
+\text{acceleration} &\approx 31.9 \\ 
+&- 0.01 \cdot \text{displacement} \\
+&- 0.17 \cdot \text{horsepower} \\
+&- 0.001 \cdot \text{weight} \\
+&- 0.28 \cdot \text{mpg} \\
+&+ 2.5\times10^{-5} \cdot \text{horsepower} \cdot \text{weight} \\
+&+ 9.7\times10^{-5} \cdot \text{mpg} \cdot \text{weight}
+\end{aligned}
+\]
+
+The model is a bit weird, with obvious contributors to acceleration such as horsepower being negative, but this is because the pair interactions are better contributors to the acceleration. However, even the pairs have tiny coefficients. This is due to the scales of the variables. 
+
+Bear in mind that the displacements and horsepowers are in the hundreds, and the weights are in the thousands. The pairwise variables will therefore be in the order of 10000. Not only this, but the mean acceleration is $15.5$, and the intercept of the model is 31.9, so obviously the model, given it chose the high intercept of 31.9, will try and drag it down by different amounts using the variables. In other circumstances, `glm` may have chosen a lower intercept, and flipped the signs/chosen different values for all the variables, but this is what `glm` believed to be the best configuration.
+
+Most of the weirdness could be avoided if we scaled and normalised the variables.
+
+
+#### Question 4
+\
+
+Consider the cleaned `Auto` data in Question 3. Create a new qualitative variable `mpgclass` with categories "low", "medium", and "high", as follows:
+
+* `mpgclass` is `low` if `mpg` $< 20$
+* `mpgclass` is `medium` if `mpg` $20 \leq$ `mpg` $< 27$
+* `mpgclass` is `high` if `mpg` $\geq 27$
+
+In parts (a)-(d) use `lda` with the default proportions for classification.
+
+##### (a) Use `acceleration`, `displacement`, `horsepower` and `weight` as predictors. `mpgclass` is the class label. Determine the classification error on the clean data, and show the confusion matrix.
+\
+
+First we have to add `mpgclass` column to the data frame
+```{r}
+Auto$mpgclass <- cut(Auto$mpg,
+                     breaks=c(-Inf,20,27,Inf),
+                     labels=c("low", "medium", "high"))
+```
+
+Now we can use MASS's linear discriminant analysis function `lda` as a classifier
+```{r}
+auto.clf.lda <- lda(mpgclass~acceleration+displacement+horsepower+weight, data=Auto)
+
+auto.clf.lda.pred <- predict(auto.clf.lda)
+
+error.conf <- function(actual, predicted) {
+  err <- sum(predicted != actual)/length(actual)
+  cat("clf error:", err, "\n\n")
+  table(actual, predicted)
+}
+
+error.conf(Auto$mpgclass, auto.clf.lda.pred$class)
+```
+
+Above is shown the classification error, which is simply given by the proportion of errors in classification. Under that is shown the confusion matrix for the classifier, trained and tested on the same data.
+
+
+##### (b) Use the cars from year 75 as the data, and apply the same rule as in (a) on this data. Perform classification on the training data, and calculate the error on the training data. Show the training error and the confusion matrix for the training error.
+\
+
+```{r}
+auto75 <- Auto[Auto$year==75,]
+
+auto75.pred <- predict(auto.clf.lda, newdata=auto75)
+
+error.conf(auto75$mpgclass, auto75.pred$class)
+```
+
+##### (c) Use the year 75 cars as test data, and all other cars as training data. Perform classification on the training data and calculate the error on the training data. Show the training error and the confusion matrix for the training error.
+\
+
+```{r}
+auto.not75 <- Auto[Auto$year!=75,]
+
+auto.not75.clf.lda <- lda(mpgclass~acceleration+displacement+horsepower+weight, data=auto.not75)
+
+auto.not75.clf.lda.pred <- predict(auto.not75.clf.lda)
+
+error.conf(auto.not75$mpgclass, auto.not75.clf.lda.pred$class)
+```
+
+##### (d) Using the classification rule obtained in (c), predict the class of the cars in the test data. State the test error and display the results in a confusion matrix.
+\
+
+```{r}
+auto.not75.test.pred <- predict(auto.not75.clf.lda, newdata=auto75)
+
+error.conf(auto75$mpgclass, auto.not75.test.pred$class)
+```
+
+##### (e) Compare the results of parts (a)-(d) and comment on the various errors and confusion matrices. Explain why we expect the test error in part (b) to be smaller than that obtained in part (d).
+\
+
+The results shown above are interesting, with, for both cases, the training error being higher than the test error. This could be because the 75th year's cars were just more predictable by the LDA rule. It is likely the case due to the fact that cars change so much over the years by having a higher max horsepower, better fuel/speed efficiency etc. and the training set covers all of these changes, so the best it can do for the full data is $\approx 20\%$ error, whereas just for the 30 75th year observations, these are all very similar, as the cars are made in the same year. Therefore the rule is more consistent for these.
+
+As for why the test error in (b) is lower than in (d), it is due to the fact that the data used in the test set is also included in the training set, so the classifier has already seen the test data before. When it is given that data again, since it's been trained on it, it is better at correctly classifying it.
+
+
+
+
+
+
+
+

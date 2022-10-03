@@ -1,0 +1,794 @@
+---
+title: "Assignment 3"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+##### Kai Bagley - 21984315
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      tidy = TRUE)
+```
+
+```{r, results='hide'}
+library("rstan")
+library("bayesplot")
+library("lattice")
+```
+
+```{r}
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+### Task 1:
+
+```{r}
+load("Feldman.rda")
+Feldman <- within(Feldman, logret <- log10(retention))
+```
+
+```{r}
+xyplot(logret ~ time | group, data=Feldman, groups=subjID, type="b")
+```
+
+Hierarchical linear regression for the data:
+
+\begin{eqnarray}
+
+\mathit{logret}_{ti}|\mu_{ti}, \sigma^2 &\sim& N(\mu_{ti}, \sigma^2) \\
+\mu_{ti} &=& \beta_0 + b_{0i} + (\beta_1 + b_{1i}) \times \mathit{time}_{ti} + \beta_2 \times \mathit{group}_i + \beta_3 \times \mathit{time}_{ti} \times \mathit{group}_i \\
+\beta_j &\sim& N(0, 1000^2), \quad j=0, ..., 3 \\
+b_{0i} &\sim& N(0, \sigma_{b_0}^2) \\
+b_{1i} &\sim& N(0, \sigma_{b_1}^2) \\
+\sigma^2 &\sim& \text{suitable prior} \\
+\sigma_{b_0}^2 &\sim& \text{suitable prior} \\
+\sigma_{b_1}^2 &\sim& \text{suitable prior} \\
+
+\end{eqnarray}
+
+Where $\mathit{logret}_{ti}$ being the outcome at time $t$ on the $i$th rat, and $\mathit{group}_i$ is 0 or 1, depending on the type of iron dosing the rat received (0 for injected, 1 for instilled).
+
+#### Part (a):
+
+In terms of $\beta_0$, $\beta_1$, $\beta_2$ and $\beta_3$, what is the population curve fitted to the rats for which $\mathit{group}_i=0$? Same for  $\mathit{group}_i=1$
+
+Using the above definition for the model, the population curves are given by:
+
+\begin{eqnarray}
+
+\mu_{ti} &=& \beta_0 + b_{0i} + (\beta_1 + b_{1i}) \times \mathit{time}_{ti} + \beta_2 \times \mathit{group}_i + \beta_3 \times \mathit{time}_{ti} \times \mathit{group}_{ti} \\
+&=& \beta_0 + b_{0i} + (\beta_1 + b_{1i}) \times \mathit{time}_{ti} \quad && \text{where } \mathit{group}_i = 0 \\
+&=& \beta_0 + b_{0i} + (\beta_1 + b_{1i}) \times \mathit{time}_{ti} + \beta_2 + \beta_3 \times \mathit{time}_{ti} \quad && \text{where } \mathit{group}_i = 1
+
+\end{eqnarray}
+
+
+#### Part (b):
+
+```{stan output.var="feldmanM"}
+
+data {
+  int<lower=0> n;    // Number of obs
+  int<lower=0> r;    // number of rats
+  int<lower=0> g;    // Number of groups
+  vector[n] logret;  // Log retention
+  vector[n] time;     
+  int<lower=0, upper=g> grp[n]; // Group ind
+  int<lower=1, upper=r> rat[n]; // Rat ID ind
+}
+
+parameters {
+  real beta0;
+  real beta1;
+  real beta2;
+  real beta3;
+  
+  //simplex[2] beta0_2; // Forced intercept
+  
+  real<lower=0> sigma_b0;
+  real<lower=0> sigma_b1;
+  vector[r] b0_raw;
+  vector[r] b1_raw;
+  
+  real log_sigma;
+}
+
+transformed parameters {
+  vector[n] mu;
+  vector[r] b0;
+  vector[r] b1;
+  // real beta0; // Forced intercept
+  // real beta2; // "
+  real<lower=0> sigma;
+  
+  // beta0 = 2*beta0_2[1]; // Forced intercept
+  // beta2 = 2*beta0_2[2]; // "
+  
+  b0 = sigma_b0 * b0_raw;
+  b1 = sigma_b1 * b1_raw;
+  
+  sigma = exp(log_sigma);
+  
+  for (i in 1:n) {
+    mu[i] = beta0 + b0[rat[i]] + (beta1 + b1[rat[i]]) * time[i] + beta2 * grp[i] + beta3 * time[i] * grp[i];
+  }
+}
+
+model {
+  // Likelihood
+  logret ~ normal(mu, sigma);
+  
+  // Priors
+  beta0 ~ normal(0, 1000);
+  beta1 ~ normal(0, 1000);
+  beta2 ~ normal(0, 1000);
+  beta3 ~ normal(0, 1000);
+  // beta0_2 ~ normal(0, 1000); // Forced intercept
+  b0_raw ~ normal(0, 1);
+  b1_raw ~ normal(0, 1);
+  
+  // Flat on log_sigma (Jeffreys' prior on normal)
+  sigma_b0 ~ cauchy(0, 25); // Regularisation
+  sigma_b1 ~ cauchy(0, 25); // "
+}
+
+generated quantities {
+  real sigma2 = sigma^2;
+  real sigma2_b0 = sigma_b0^2;
+  real sigma2_b1 = sigma_b1^2;
+}
+
+```
+
+```{r}
+logret <- Feldman$logret
+n      <- length(logret)
+grp    <- as.integer(Feldman$group)-1
+g      <- length(unique(grp))
+time   <- Feldman$time
+rat    <- as.integer(as.factor(Feldman$subjID))
+r      <- length(unique(rat))
+
+data.in <- list(logret=logret, time=time, rat=rat, grp=grp, n=n, r=r, g=g)
+model.fit <- sampling(feldmanM, data=data.in)
+```
+
+
+
+#### Part (c):
+
+```{r}
+print(model.fit, digits=3, pars=c("sigma2", "sigma2_b0", "sigma2_b1", "beta0", "beta1", "beta2", "beta3"))
+```
+
+The Bayesian estimates for each parameter:
+
+  * $\beta_0 \approx 2.02$
+  * $\beta_1 \approx -0.017$
+  * $\beta_2 \approx 0.001$
+  * $\beta_3 \approx 0.007$
+  * $\sigma^2 \approx 0.003$
+  * $\sigma_{b0}^2 \approx 0.001$
+  * $\sigma_{b1}^2 \approx 0$
+
+#### Part (d):
+
+There is some amount of. evidence that rate of particle clearance by liver endothelial cells is different to that of lung macrophages. As we can see by the Bayesian estimates above, the estimates for beta2 and beta3 are quite low, and these are the only parameters that result in a difference between the two dosing techniques. These numbers are low, however will have a small influence on the log-retention of the iron dosed. For example with the treated group estimate, at $time_{ti} = 30$, which is the final time, $\beta_0 + \beta_1 * \mathit{time}_{ti} + \beta_2 + \beta_3 * \mathit{time}_{ti} = 1.73$, which is significant compared to the control group estimate which is equal to $\beta_0 + \beta_1 * \mathit{time}_{ti} = 1.51$. The difference of 0.21 here is significant, and I believe there is strong evidence of an effect of the treatment.
+
+#### Part (e):
+
+By viewing the data, we can see that for all observations where $\mathit{time}_i = 0$, the log-retention is equal to 2. That is, $\mathit{logret}_{0i} = 2$. However in the model, the intercept is given by $\beta_0 + \beta_2$, which according to the Bayesian estimates, is $\beta_0 + \beta_2 \approx 2.021$. This value should technically equal 2, and we can see that the model is obviously trying to keep it around 2, but thanks to the fact that the log-retention increases slightly immediately after dosing, this value shifts upwards slightly to 2.02.
+
+#### Part (f):
+
+In order to force the intercept of the regression models to 2, we must ensure this is the case for both groups. We can ensure the intercept is 2 for the control group by forcing $\beta_0$ to be equal to 2. Now we can think about the treated group. For this group, the intercept is given by $\beta_0 + \beta_2$. Since $\beta_0 = 2$, to keep this intercept equal to 2 we set $\beta_2 = 0$. This can be implemented in the above model simply by removing the terms $\beta_0$ and $\beta_2 \cdot \mathit{time}_i$ from the $\mu$ function, and adding the constant $2$ to it. 
+
+#### Some diagnostics of model:
+```{r}
+check_hmc_diagnostics(model.fit)
+```
+
+```{r}
+np_m <- nuts_params(model.fit)
+```
+
+```{r}
+mcmc_trace(model.fit, np=np_m, regex_pars=c("sigma"))
+```
+
+```{r}
+posterior <- as.matrix(model.fit)
+```
+
+```{r}
+mcmc_pairs(posterior, np=np_m, regex_pars=c("^sigma"))
+mcmc_pairs(posterior, np=np_m, regex_pars=c("beta[0123]"))
+mcmc_pairs(posterior, np=np_m, regex_pars=c("sigma_b0", "beta[0123]"))
+mcmc_pairs(posterior, np=np_m, regex_pars=c("sigma_b1", "beta[0123]"))
+```
+
+```{r}
+mcmc_acf(posterior, regex_pars=c("sigma", "beta"))
+```
+
+### Task 2:
+
+Load data
+```{r}
+load("task2.rda")
+x <- z[1:30]
+y <- z[31:60]
+```
+
+Implement model 1:
+```{stan output.var="task2model1"}
+
+data {
+  int<lower=0> n;
+  vector[n] z;
+}
+
+transformed data {
+  vector[30] x;
+  vector[30] y;
+  
+  x = z[:30];
+  y = z[31:];
+}
+
+parameters {
+  real mu_x;
+  real mu_y;
+  real log_sigma;
+}
+
+transformed parameters {
+  real sigma = exp(log_sigma);
+}
+
+model {
+  x ~ normal(mu_x, sigma);
+  y ~ normal(mu_y, sigma);
+}
+
+generated quantities {
+  vector[30] x_rep;
+  vector[30] y_rep;
+  real t1_rep;
+  real t2_rep;
+  real t3_rep;
+  real t1_dat;
+  real t2_dat;
+  real t3_dat;
+  real t1_pval;
+  real t2_pval;
+  real t3_pval;
+  // Generate replicate datasets:
+  for (i in 1:30) {
+    x_rep[i] = normal_rng(mu_x, sigma);
+    y_rep[i] = normal_rng(mu_y, sigma);
+  }
+  
+  // Statistics:
+  t1_rep = (1.0/30) * sum(x_rep);
+  t2_rep = (1.0/30) * sum(y_rep);
+  t3_rep = sd(x_rep)/sd(y_rep);
+  t1_dat = (1.0/30) * sum(x);
+  t2_dat = (1.0/30) * sum(y);
+  t3_dat = sd(x)/sd(y);
+  
+  // p-values:
+  t1_pval = t1_rep > t1_dat;
+  t2_pval = t2_rep > t2_dat;
+  t3_pval = t3_rep > t3_dat;
+}
+
+```
+
+And model 2:
+```{stan output.var="task2model2"}
+
+data {
+  int<lower=0> n;
+  vector[n] z;
+}
+
+transformed data {
+  vector[30] x;
+  vector[30] y;
+  
+  x = z[:30];
+  y = z[31:];
+}
+
+parameters {
+  real mu_x;
+  real mu_y;
+  real log_sigma_x;
+  real log_sigma_y;
+}
+
+transformed parameters {
+  real sigma_x = exp(log_sigma_x);
+  real sigma_y = exp(log_sigma_y);
+}
+
+model {
+  x ~ normal(mu_x, sigma_x);
+  y ~ normal(mu_y, sigma_y);
+}
+
+generated quantities {
+  vector[30] x_rep;
+  vector[30] y_rep;
+  real t1_rep;
+  real t2_rep;
+  real t3_rep;
+  real t1_dat;
+  real t2_dat;
+  real t3_dat;
+  real t1_pval;
+  real t2_pval;
+  real t3_pval;
+  // Generate replicate datasets:
+  for (i in 1:30) {
+    x_rep[i] = normal_rng(mu_x, sigma_x);
+    y_rep[i] = normal_rng(mu_y, sigma_y);
+  }
+  
+  // Statistics:
+  t1_rep = (1.0/30) * sum(x_rep);
+  t2_rep = (1.0/30) * sum(y_rep);
+  t3_rep = sd(x_rep)/sd(y_rep);
+  t1_dat = (1.0/30) * sum(x);
+  t2_dat = (1.0/30) * sum(y);
+  t3_dat = sd(x)/sd(y);
+  
+  // p-values:
+  t1_pval = t1_rep > t1_dat;
+  t2_pval = t2_rep > t2_dat;
+  t3_pval = t3_rep > t3_dat;
+}
+
+```
+
+Sample from model 1:
+```{r}
+data.in = list(n=length(z), z=z)
+task2model1.fit <- sampling(task2model1, data=data.in)
+```
+
+Sample from model 2:
+```{r}
+task2model2.fit <- sampling(task2model2, data=data.in)
+```
+
+Show estimates for model 1:
+```{r}
+print(task2model1.fit, digits=3, pars=c("mu_x", "mu_y", "sigma", "t1_rep", "t2_rep", "t3_rep", "t1_dat", "t2_dat", "t3_dat", "t1_pval", "t2_pval", "t3_pval"))
+```
+
+#### Part (a):
+
+Bayesian estimates for the p-values of the given statistics:
+
+  * p-value of $T_1(\boldsymbol{z}) \approx 0.493$
+  * p-value of $T_2(\boldsymbol{z}) \approx 0.491$
+  * p-value of $T_3(\boldsymbol{z}) \approx 0$
+  
+The last p-value is zero due to he fact that the sigma used in x/x_rep and y/y_rep were the same sigma, so the standard deviations are the same, giving a ratio of zero.
+
+And model 2:
+```{r}
+print(task2model2.fit, digits=3, pars=c("mu_x", "mu_y", "sigma_x", "sigma_y", "t1_rep", "t2_rep", "t3_rep", "t1_dat", "t2_dat", "t3_dat", "t1_pval", "t2_pval", "t3_pval"))
+```
+
+Bayesian estimates for the p-values of the given statistics:
+
+  * p-value of $T_1(\boldsymbol{z}) \approx 0.500$
+  * p-value of $T_2(\boldsymbol{z}) \approx 0.502$
+  * p-value of $T_3(\boldsymbol{z}) \approx 0.496$
+  
+#### Part (b):
+
+We can see the p-value for $T_3$ for model 1 is equal to zero. The reason for this is due to the fact that the replicated values in model 1 are drawn from a distribution with the same standard deviation, so when we calculate the $T_3$ statistic, which involves taking the ratio of standard deviations of each set of replicated values, which results in 0. 
+
+The difference between the two models is not significant, as we can see from the replicated values being similar, and the posterior estimates for mu_x and mu_y being more or less the same. Since the difference is not significant, I will prefer the logical choice that both the means, and the variances are going to be different for different generator designs, so I choose model 2 even though it is marginally more complicated model-wise.
+
+```{r}
+mcmc_trace(task2model1.fit, regex_pars=c("^t"))
+mcmc_trace(task2model2.fit, regex_pars=c("^t"))
+```
+
+
+### Task 3:
+
+Load data
+```{r}
+bb <- read.csv("meta.csv", stringsAsFactors = TRUE)
+```
+
+#### Part (a):
+
+Pool the data
+```{r}
+bb <- within(bb, Survivals <- Total - Deaths)
+xtabs(cbind(Deaths, Survivals) ~ Treatment, data=bb)
+```
+
+Stan model:
+```{stan output.var="task3model1"}
+data {
+  int<lower=0> n1;
+  int<lower=0> n2;
+  int m1[n1];
+  int m2[n1];
+  int y1[n1];
+  int y2[n1];
+}
+
+parameters {
+  real<lower=0, upper=1> p1;
+  real<lower=0, upper=1> p2;
+}
+
+model {
+  y1 ~ binomial(m1, p1);
+  y2 ~ binomial(m2, p2);
+  
+  // Priors
+  p1 ~ beta(0.5, 0.5); // Jeffreys' prior on binomial likelihood
+  p2 ~ beta(0.5, 0.5); // "
+}
+
+generated quantities {
+  real psi = (p2/(1-p2))/(p1/(1-p1));
+}
+```
+
+Sampling from the model
+```{r}
+y1 <- bb[bb$Treatment=="control", "Deaths"]
+y2 <- bb[bb$Treatment=="treated", "Deaths"]
+n1 <- length(y1)
+n2 <- length(y2)
+m1 <- bb[bb$Treatment=="control", "Total"]
+m2 <- bb[bb$Treatment=="treated", "Total"]
+
+data.in   <- list(n1=n1, n2=n2, y1=y1, y2=y2, m1=m1, m2=m2)
+task3model1.fit <- sampling(task3model1, data=data.in)
+```
+
+```{r}
+print(task3model1.fit)
+```
+
+Bayesian estimate for $\psi$ is ~0.77, with sd ~= 0.04.
+
+$\psi$ is an odds ratio of deaths from the treated group to deaths from the control group, and states that patients that were treated are 0.77 times more likely to die than the control group. Or, we could say that taking the treatment reduces your chances of dying by $1-0.77 = 0.23 = 23\%$.
+
+#### Part (b):
+
+Define an indicator variable $x$ for $\text{Treatment}$:
+
+```{r}
+bb <- within(bb, x <- ifelse(Treatment=="treated", 1, 0))
+```
+
+##### b.1:
+
+Stan model:
+```{stan output.var="task3model2"}
+data {
+  int<lower=0> n;
+  int m[n];
+  int x[n];
+  int y[n];
+}
+
+parameters {
+  real beta0;
+  real beta1;
+}
+
+transformed parameters {
+  vector[n] logit_p;
+  vector[n] p;
+  
+  for (i in 1:n) {
+    logit_p[i] = beta0 + beta1 * x[i];
+  }
+  p = inv_logit(logit_p);
+}
+
+model {
+  // Likelihood
+  y ~ binomial(m, p);
+  
+  // Priors
+  p ~ beta(0.5, 0.5); // Jeffreys' prior
+  
+  beta0 ~ normal(0, 1000); // Uninformative prior
+  beta1 ~ normal(0, 1000); // "
+}
+
+generated quantities {
+  real ebeta1 = exp(beta1);
+}
+```
+
+```{r}
+y <- bb$Deaths
+m <- bb$Total
+x <- bb$x
+n <- length(y)
+
+data.in <- list(y=y, x=x, m=m, n=n)
+task3model2.fit <- sampling(task3model2, data=data.in)
+```
+
+```{r}
+print(task3model2.fit, pars=c("ebeta1", "beta0", "beta1", "logit_p[1]", "p[1]"))
+```
+
+We can see that $\psi$ from part (a) is equal to $e^{\beta_1}$, where $\beta_1 \approx -0.26$, and $e^{-0.26} \approx 0.77$ (Bayesian estimate). The reason that these are the same value is due to the fact that in this logit regression model, $\beta_1$ represents the difference in the log-odds of deaths between treated and untreated groups:
+\begin{equation}
+\text{log}(\text{odds of dying}) =
+\begin{cases}
+\beta_0           & \text{for control group}  \\
+\beta_0 + \beta_1 & \text{for treated group}
+\end{cases}
+\end{equation}
+
+If we take the exponential of these values:
+\begin{equation}
+\text{odds of dying} =
+\begin{cases}
+e^{\beta_0}           & \text{for control group}  \\
+e^{\beta_0 + \beta_1} & \text{for treated group}
+\end{cases}
+\end{equation}
+
+And to get $e^{\beta_1}$:
+\begin{eqnarray}
+e^{\beta_1} &=& \frac{e^{\beta_0 + \beta_1}}{e^{\beta_0}}
+&=& \frac{\text{odds of death in treated group}}{\text{odds of death in control group}}
+\end{eqnarray}
+
+Which is the odds ratio of treated-group deaths to control-group deaths, the same as $\psi$ from part (a).
+
+Used Jeffreys' prior on p, and flat priors on $\beta_0$ and $\beta_1$.
+
+
+##### b.2:
+
+```{stan output.var="task3model3"}
+data {
+  int<lower=0> n; // Number of groups
+  int<lower=0> j; // Number of studies
+  int s[n]; // Study numbers
+  int m[n]; // Counts
+  int x[n]; // Treatment indicator 
+  int y[n]; // Deaths 
+}
+
+parameters {
+  vector[j] beta0;
+  real beta1;
+  
+  real mu_beta0;
+  real sigma2_beta0;
+}
+
+transformed parameters {
+  vector[n] logit_p;
+  vector<lower=0>[n] p;
+  real sigma_beta0;
+  
+  sigma_beta0 = sqrt(sigma2_beta0);
+  
+  for (i in 1:n) {
+    logit_p[i] = beta0[s[i]] + beta1 * x[i];
+  }
+  p = inv_logit(logit_p);
+}
+
+model {
+  // Likelihood
+  y ~ binomial(m, p);
+  
+  // Priors
+  p ~ beta(0.5, 0.5); // Jeffreys' prior on likelihood
+  
+  beta0 ~ normal(mu_beta0, sigma_beta0);
+  beta1 ~ normal(0, 1000); // Non informative prior
+  // Flat priors on mu_beta0 and sigma2_beta0
+}
+
+generated quantities {
+  real exp_beta1 = exp(beta1);
+}
+```
+
+```{r}
+y <- bb$Deaths
+m <- bb$Total
+x <- bb$x
+s <- bb$Study
+n <- length(y)
+j <- length(unique(s))
+
+data.in <- list(y=y, x=x, s=s, m=m, n=n, j=j)
+task3model3.fit <- sampling(task3model3, data=data.in)
+```
+
+```{r}
+print(task3model3.fit, digits=3, pars=c("exp_beta1", "mu_beta0", "sigma_beta0", "beta1", "beta0[1]", "p[1]", "logit_p[1]"))
+```
+
+$e^{\beta_1}$ is constant across all studies as it is independent of the study, in the given hierarchical model, the definition of the logit link includes $\beta_0$ which is a vector of normal distributions, one for each study, whereas the $\beta_1$ is only a single distribution. Due to this, the same distribution for $\beta_1$ must be used for all studies, and is therefore constant across all studies. It is given by $e^{\beta_1}$ as shown in part (b.1).
+
+##### b.3:
+
+Stan model:
+```{stan output.var="task3model4"}
+data {
+  int<lower=0> n; // Number of group
+  int<lower=0> j; // Number of studies
+  int s[n]; // Indices of study
+  int m[n]; // Number of trials
+  int x[n]; // Treatment indicator
+  int y[n]; // Deaths
+}
+
+parameters {
+  vector[j] beta0;
+  vector[j] beta1;
+  
+  real mu_beta0;
+  real mu_beta1;
+  real<lower=0> sigma2_beta0;
+  real<lower=0> sigma2_beta1;
+}
+
+transformed parameters {
+  vector[n] logit_p;
+  vector<lower=0>[n] p;
+  real<lower=0> sigma_beta0;
+  real<lower=0> sigma_beta1;
+  
+  sigma_beta0 = sqrt(sigma2_beta0);
+  sigma_beta1 = sqrt(sigma2_beta1);
+  
+  for (i in 1:n) {
+    logit_p[i] = beta0[s[i]] + beta1[s[i]] * x[i];
+  }
+  p = inv_logit(logit_p);
+}
+
+model {
+  // Likelihood
+  y ~ binomial(m, p);
+  
+  // Priors
+  p ~ beta(0.5, 0.5); // Jeffreys' prior on likelihood
+  
+  beta0 ~ normal(mu_beta0, sigma_beta0);
+  beta1 ~ normal(mu_beta1, sigma_beta1);
+  // Flat priors on mu_beta and sigma_beta - Jeffreys'
+}
+
+generated quantities {
+  real exp_mu_beta1;
+  int ut_rep;
+  int tr_rep;
+  
+  exp_mu_beta1 = exp(mu_beta1);
+  
+  ut_rep = binomial_rng(100, inv_logit(mean(beta0)));
+  tr_rep = binomial_rng(100, inv_logit(mean(beta0 + beta1)));
+}
+```
+
+Sample from above model:
+```{r}
+y <- bb$Deaths
+m <- bb$Total
+x <- bb$x
+s <- bb$Study
+n <- length(y)
+j <- length(unique(s))
+
+data.in <- list(y=y, x=x, s=s, m=m, n=n, j=j)
+task3model4.fit <- sampling(task3model4, data=data.in)
+```
+
+
+Print estimates:
+```{r}
+print(task3model4.fit, digits=3, pars=c("exp_mu_beta1", "mu_beta0", "mu_beta1", "sigma_beta0", "sigma_beta1", "ut_rep", "tr_rep"))
+```
+
+The priors used are:
+
+  * Jeffreys' prior on p
+  * Flat priors on $\mu_{\beta_0}$, $\mu_{\beta_1}$, $\sigma_{\beta_0}^2$, $\sigma_{\beta_1}^2$
+  
+Bayesian estimate for $\exp(\mu_{\beta_1})$: $e^{\mu_{\beta_1}} \approx 0.772$
+
+Estimate for the deaths in the replicated study of 200 participants (100 for each group): About 10 deaths in untreated group, and around 8 in treated.
+
+Checking a couple different diagnostics:
+```{r}
+check_hmc_diagnostics(task3model4.fit)
+```
+
+```{r}
+np_m5 <- nuts_params(task3model4.fit)
+```
+
+```{r}
+mcmc_trace(task3model4.fit, np=np_m5, pars=c("beta0[1]", "beta1[1]"), regex_pars = c("sigma", "mu"))
+```
+
+```{r}
+posterior <- as.matrix(task3model4.fit)
+
+mcmc_pairs(posterior, np=np_m5, pars=c("exp_mu_beta1", "mu_beta0", "mu_beta1", "sigma_beta0", "sigma_beta1"))
+```
+
+```{r}
+mcmc_acf(posterior, pars = c("sigma_beta0", "sigma_beta1", "mu_beta0", "mu_beta1"))
+```
+
+#### b.4.i:
+
+The median value of a distribution is not affected by transformations, including logit. This means that to get the median, we simply take the median of the estimates, then do a logit transformation on this number. This is better computationally than taking the logit transformation on all of the draws separately, then doing calculating the median. In the first method we do a median calculation on N values, then a single logit transform, whereas in the second method we take N logit transforms, and then a median on N values. Clearly the first method is better. This is all in comparison with the mean rather than the median, which since it is affected by transformations, is forced to do N logits, then the mean on N values.
+
+#### b.4.ii:
+
+```{r}
+p.model2 <- extract(task3model2.fit, pars="p")[[1]]
+p.model2.means <- colMeans(p.model2)
+p.model2.quant <- apply(p.model2, 2, function(x) quantile(x, c(0.025, 0.975)))
+p.model3 <- extract(task3model3.fit, pars="p")[[1]]
+p.model3.means <- colMeans(p.model3)
+p.model3.quant <- apply(p.model3, 2, function(x) quantile(x, c(0.025, 0.975)))
+p.model4 <- extract(task3model4.fit, pars="p")[[1]]
+p.model4.means <- colMeans(p.model4)
+p.model4.quant <- apply(p.model4, 2, function(x) quantile(x, c(0.025, 0.975)))
+mu.control <- median(extract(task3model4.fit, pars="mu_beta0")[[1]])
+mu.treated <- median(extract(task3model4.fit, pars="mu_beta1")[[1]]) + mu.control
+delta <- 0.2
+
+plot(c(0, 0.3), c(0.5, 22.5), type="n", main="Control Group", xlab="Death probability", ylab="Study number")
+abline(v = 1/(1 + exp(-mu.control)), lty = "dashed", col = "green")
+points(p.model2.means[1:22], 1:22-delta, col="red")
+points(p.model3.means[1:22], 1:22, col="blue")
+points(p.model4.means[1:22], 1:22+delta, col="black")
+segments(p.model2.quant[1, 1:22], 1:22-delta, p.model2.quant[2, 1:22], 1:22-delta, col="red")
+segments(p.model3.quant[1, 1:22], 1:22, p.model3.quant[2, 1:22], 1:22, col="blue")
+segments(p.model4.quant[1, 1:22], 1:22+delta, p.model4.quant[2, 1:22], 1:22+delta, col="black")
+
+plot(c(0, 0.3), c(22.5, 44.5),type="n", main="Treated Group", xlab="Death probability", ylab="Study number")
+abline(v = 1/(1 + exp(-mu.treated)), lty = "dashed", col = "green")
+points(p.model2.means[23:44], 23:44-delta, col="red")
+points(p.model3.means[23:44], 23:44, col="blue")
+points(p.model4.means[23:44], 23:44+delta, col="black")
+segments(p.model2.quant[1, 23:44], 23:44-delta, p.model2.quant[2, 23:44], 23:44-delta, col="red")
+segments(p.model3.quant[1, 23:44], 23:44, p.model3.quant[2, 23:44], 23:44, col="blue")
+segments(p.model4.quant[1, 23:44], 23:44+delta, p.model4.quant[2, 23:44], 23:44+delta, col="black")
+```
+
+In the above graphs, the red group represents the model pooled over study groups, and the blue and black represent hierarchical groups. The blue group assumes that the effect of being treated is the same across all studies, and the black group assumes that there each study has its own influence on the probability, (including treated studies). Looking at the above graphs, we can see that the for both, the blue model's confidence intervals are noticeably smaller in all cases. The blue model's means tend to be closer to the median line. In regard to the red model, even though is somewhat informative of the effect of the treatment, it doesn't take into account the actual differences between each of the studies, which is clearly shown by the other two models. Going by the above reasoning, I believe the blue model (task3, part (b.2) model) is a better representation of the data than the other.
+
+
+
+
+
+
+
+

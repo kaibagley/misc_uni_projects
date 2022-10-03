@@ -1,0 +1,329 @@
+---
+title: "Assignment 1"
+output: html_notebook
+---
+
+Kai Bagley - 21984315
+
+## Task 1
+
+#### Implement the random walk MH algorithm as described
+
+Create a posterior function for p, outputs in log scale. Will use the same posterior as in Lab 2, since the task mentions this assignment explores the MCMC in this lab exercise.
+
+```{r}
+post.log <- function(p) {
+  res <- ((12+p)*log(p) + (9-p)*log(1-p))
+  return(res)
+}
+```
+
+Plot of log posterior.
+```{r}
+curve(post.log(x), from=0, to=1, n=301)
+```
+
+Plot of log posterior converted back to our interval $[0, 1]$
+```{r}
+curve(exp(post.log(x)), from=0, to=1, n=301)
+```
+
+
+Create logit and invlogit functions
+```{r}
+logit    <- function(p) log(p / (1-p))
+invlogit <- function(lo) 1 / (1+exp(-lo))
+```
+
+
+#### Implementing Metropolis-Hastings Algorithm
+a. Implement the random walk MH algorithm.
+
+Define proposal dist as a function, adding Gaussian/normal noise to the current point in the chain:
+```{r}
+proposal <- function(p, sigma) {
+  logodds <- logit(p) + rnorm(1, 0, sigma)
+  return(invlogit(logodds))
+}
+```
+
+The acceptance probability is given by:
+
+\[
+A
+= 
+\min \Bigg(
+  \frac
+    {f \left( x^{(t)} \right) q \left( p^{(t-1)} | y^{(t)} \right)}
+    {f \left( p^{(t-1)} \right) q \left( y^{(1)} | p^{(t-1)} \right)}
+  ,
+  1
+\Bigg)
+\]
+
+Given in the description of task 1, is the following "corrective term":
+
+\[
+\frac
+  {q \left( p^{(t-1)} | y^{(t)} \right)}
+  {q \left( y^{(1)} | p^{(t-1)} \right)}
+=
+\frac
+  {y^{(t)} \left( 1 - y^{(t)} \right)}
+  {p^{(t-1)} \left( 1 - p^{(t-1)} \right)}
+\]
+
+Which will be used in the acceptance probability for ease of calculation.
+
+Define the MCMC function using a random walk Metropolis-Hastings algorithm:
+```{r}
+MH.funct <- function(posterior, # Dist we want samples from
+                     proposal,  # Proposal dist
+                     n,         # Number of iterations
+                     sd) {      # Std dev for RW norm
+  
+  num.accept <- 0
+  chain      <- rep(0, n+1)
+  chain[1]   <- 0.5 
+  
+  for (i in 1:n) {
+    # Propose candidate for chain
+    x.cand <- proposal(chain[i], sd)
+    
+    # Since post.log has logarithmic output, we subtract instead of divide
+    A1 <- exp(post.log(x.cand) - post.log(chain[i]))
+    # From corrective term
+    A2 <- ( (x.cand * (1-x.cand)) / (chain[i] * (1-chain[i])) )
+    # Acceptance probability
+    A <- min(1, A1 * A2)
+    
+    # Generate random uniform var
+    # Accept candidate if this value is less than acceptance prob
+    if (runif(1) < A) {
+      # Accept candidate, move to new value
+      num.accept <- num.accept + 1
+      chain[i+1] <- x.cand
+    } else {
+      # Reject candidate, remain in place
+      chain[i+1] <- chain[i]
+    }
+  }
+  
+  ret = list("chain"=chain, "accept"=num.accept/n)
+  return(ret)
+}
+
+```
+
+#### Questions
+
+b. What is the acceptance rate of your MH algorithm if you use $\sigma = \frac{1}{100}$
+How would you describe the Markov chain produced by this setting of $\sigma$?
+
+Run MH function defined above:
+
+```{r}
+MC1 <- MH.funct(post.log, proposal, 10000, 1/100)
+
+chain1 <- MC1$chain
+acc1   <- MC1$accept
+
+acc1
+```
+The acceptance rate for $\sigma = \frac{1}{100}$ is shown above, approximately equal to 0.99.
+
+##### Analysis of Chain 1
+
+```{r}
+plot(chain1, main="Plot of MC realisations (sigma = 1/100)")
+```
+
+```{r}
+hist(chain1, main="Histogram of MC (sigma = 1/100)")
+```
+
+We can see the chain is quite unstable, walking around and not really stabilising on any value. This is likely due to the small $\sigma$ not allowing it to correct itself with a large jump to its stationary distribution. The chain will hover around the initial value of 0.5, and take a long time to reach its stationary distribution.
+
+c. What is the acceptance rate of your MH algorithm if you use $\sigma = 10$
+How would you describe the Markov chain produced by this setting of $\sigma$?
+
+Run MH function defined above:
+
+```{r}
+MC2 <- MH.funct(post.log, proposal, 10000, 10)
+
+chain2 <- MC2$chain
+acc2   <- MC2$accept
+
+acc2
+```
+
+Above line shows the acceptance rate for $\sigma = 10$, with approximate value of 0.06.
+
+
+##### Analysis of Chain 2
+
+```{r}
+plot(chain2, main="Plot of MC realisations (sigma = 10)")
+```
+
+```{r}
+hist(chain2, main="Histogram of MC (sigma = 10)")
+```
+
+Due to the high value of $\sigma$, the acceptance rate is very low, around 0.06. The Gaussian noise has a high standard deviation, and makes the chain hop around many different high and low values very quickly. This will cause the chain to take a long time to converge to its stationary distribution. If we were to up the number of iterations for this chain, the model would be quite accurate, in comparison to the low $\sigma$ model in (b).
+
+d. For what value of $\sigma$ do you obtain an acceptance rate of around 70%? How does the corresponding Markov chain look like?
+
+
+Using a brute-force/trial-and-error method, assuming that *around 70%* means between 69% and 71%:
+
+```{r}
+for (i in seq(from=0, to=5, by=0.01)) {
+  MC3 <- MH.funct(post.log, proposal, 10000, i)
+  if (MC3$accept > 0.69   &&   MC3$accept < 0.71) {
+    sig <- i
+    break
+  } 
+}
+
+sig
+```
+
+$\sigma \approx 0.45$ will result in a chain with acceptance rate of around 0.7.
+
+```{r}
+chain3 <- MC3$chain
+acc3   <- MC3$accept
+acc3
+```
+
+##### Analysis of Chain 3
+
+```{r}
+plot(chain3, main="Plot of MC realisations (sigma = 0.45)")
+```
+
+```{r}
+hist(chain3, main="Histogram of MC (sigma = 0.45)")
+```
+
+At $\sigma = 0.45$, the chain easily converges to its stationary distribution, and doesn't have the wild paths that throw off the histogram, since it can jump far enough back to the mean without overshooting. The histogram resembles a normal distribution.
+
+
+## Task 2
+
+Load libraries: 
+```{r, results='hide'}
+library("rstan")
+library("bayesplot")
+```
+
+
+#### Fit model for bicycle data
+
+a. Fit a model for $y_i, i=1, ..., 10$, as realisations of a binomial bistributed random variable $Y_i$, with parameters $m_i$ and $p$. Regard $m_i$ as fixed and given, and use a chosen $p$. What is the Bayesian estimate?
+
+Creating a Stan model for the bicycle data:
+```{stan output.var=bike.model}
+  data {
+    int n;
+    int m[n];
+    int y[n];
+  }
+  
+  parameters {
+    real<lower=0, upper=1> p;
+  }
+  
+  model {
+    y ~ binomial(m, p);
+    
+    // Prior (flat prior)
+    p ~ beta(1, 1);
+  }
+```
+
+Passing data to model and fitting it:
+```{r, results='hide'}
+data.in <- list(n=10, m=c(37, 450, 456, 61, 218, 722, 664, 481, 76, 480), y=c(8, 35, 31, 19, 38, 47, 44, 44, 29, 18))
+model.fit <- sampling(bike.model, data=data.in)
+```
+```{r}
+print(model.fit, digits=3)
+```
+
+As shown above, the Bayesian estimate for p is approx. 0.09.
+
+b. Fit a model similar to in part (a), but with parameters $m_i$ and $p_i$ (instead of $m_i$ and $p$). What is the Bayesian estimate for $p_i$
+
+Create Stan model:
+
+```{stan output.var=bike.model2}
+  data {
+    int n;
+    int m[n];
+    int y[n];
+  }
+  
+  parameters {
+    real<lower=0, upper=1> p[n];
+  }
+  
+  transformed parameters {
+    real r;
+    
+    r = max(p) - min(p);
+  }
+  
+  model {
+    for (i in 1:n){
+      y[i] ~ binomial(m[i], p[i]);
+    }
+    
+    // Prior (flat prior)
+    for (i in 1:n){
+      p[i] ~ beta(1, 1);
+    }
+  }
+```
+
+Pass data to model and fit it:
+```{r, results='hide'}
+data.in <- list(n=10, m=c(37, 450, 456, 61, 218, 722, 664, 481, 76, 480), y=c(8, 35, 31, 19, 38, 47, 44, 44, 29, 18))
+model.fit2 <- sampling(bike.model2, data=data.in)
+```
+
+```{r}
+print(model.fit2, digits=3)
+```
+
+As shown above, the Bayesian estimates for each $p_i$ is:
+
+* $p_1 \approx 0.23$
+* $p_2 \approx 0.08$
+* $p_3 \approx 0.07$
+* $p_4 \approx 0.32$
+* $p_5 \approx 0.18$
+* $p_6 \approx 0.07$
+* $p_7 \approx 0.07$
+* $p_8 \approx 0.09$
+* $p_9 \approx 0.38$
+* $p_{10} \approx 0.04$
+
+Plot of posterior density of $r$:
+
+```{r}
+posterior <- as.array(model.fit2)
+mcmc_areas(posterior, pars="r", point_est="mean")
+```
+
+As shown in above summary, and the above plot, it is shown that the Bayesian estimate for $r$ is approximately 0.36. The standard deviation of $r$ is shown alongside its mean above, with a value of approximately 0.05.
+
+c. Discuss results of (a) and (b) and determine which model is better.
+
+Since the estimate for each of $p_i$ varies quite a bit, with $r$ being approx. 0.356, it's tempting to say that the model in (b) is better. However, the model (a) has a small standard deviation of 0.005. 
+
+According to the lecture which references the data, the data given to us is *the observed data for residential streets with a bike route*. Since each random variable $Y_i$ is taken from the same street type, it is more logical to treat the value $p$ as a single shared parameter for each random variable. Also, if we were to use $p_i$ rather than $p$, it would be overfitting, since each $p_i$ will be unique to each street, rather than a parameter for the *type* of street.
+
+Due to the above reasons, I believe that (a) is the better model for the given data.

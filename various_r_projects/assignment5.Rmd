@@ -1,0 +1,635 @@
+---
+title: "Assignment 2"
+author: "Kai Bagley - 21984315"
+date: "18/09/2021"
+output:
+  pdf_document: 
+    fig_caption: yes
+fig_width: 5
+fig_height: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      tidy = TRUE)
+```
+
+```{r}
+Sys.setenv("VROOM_CONNECTION_SIZE" = 200000)
+```
+
+```{r, results='hide'}
+library("ggplot2")
+library("patchwork")
+library("GGally")
+library("MASS")
+library("reshape2")
+library("tidyverse")
+library("broom")
+```
+
+## Questions
+
+### Q1
+
+#### (a) Why can it be advantageous to carry out PCA or FA on scaled data?
+\
+PCA and FA are sensetive to variable scales, since they try and capture variance along their components. If a variable is on a much larger scale than all other variables, the first PC will align with it, believing that the vast majority of the variance is from that variable.
+
+#### (b) Calculate the following:
+
+* Dimension of $\Sigma$
+* Eigenvalues of $\Sigma$
+* The matrix $\Sigma^{2/3}$
+* The matrix $\Sigma^{-1/4} \Sigma \Sigma^{-1/4}$
+
+```{r}
+popdf    <- read.csv("../data/ass2pop.csv", header=FALSE)
+pop.mu1  <- popdf[,1]
+pop.mu2  <- popdf[,2]
+pop.sig1 <- popdf[1:11,3:13]
+```
+
+##### i. Dimension of $\Sigma$
+\
+```{r}
+dim(pop.sig1)
+```
+
+Above represents the dimensions of $\Sigma$, showing rows and columns respectively.
+
+##### ii. Eigenvalues of $\Sigma$
+\
+```{r}
+pop.sig1.eig <- eigen(pop.sig1)
+pop.sig1.eig$values
+```
+
+Above is the results of the R code, where each element is an eigenvalue of $\Sigma$, in decreasing order.
+
+##### iii. Calculate $\Sigma^{2/3}$
+\
+This can be found as follows:
+
+\begin{equation}
+\Sigma^{2/3} = \Lambda \Gamma^{2/3} \Lambda^T
+\end{equation}
+
+Where $\Lambda$ is the vector of eigenvectors found from a spectral decomposition of $\Sigma$, and $\Gamma$ is a diagonal matrix with entries being the eigenvalues of $\Sigma$ in decreasing order. $\Gamma^{2/3}$ is simply $\Gamma$ with its entries to the power of $\frac{2}{3}$.
+
+```{r table_sigma1}
+pop.sig1.2on3 <- pop.sig1.eig$vectors %*% diag(pop.sig1.eig$values^(2/3)) %*% t(pop.sig1.eig$vectors)
+
+knitr::kable(pop.sig1.2on3, booktabs=T, caption="\\label{fig:table_sigma1}") %>% kableExtra::kable_styling(latex_options=c("striped", "scale_down", "HOLD_position"))
+```
+
+Table \ref{fig:table_sigma1} is the full matrix $\Sigma^{2/3}$, which is the square of the cube root of the covariance matrix.
+
+##### iv. Calculate $\Sigma^{-1/4} \Sigma \Sigma^{-1/4}$ and its eigenvalues
+\
+We can calculate $\Sigma^{-1/4}$ in a similar way to part (iii.):
+
+\begin{equation}
+\Sigma^{-1/4} = \Lambda \Gamma^{-1/4} \Lambda^T
+\end{equation}
+
+Then we use this to calculate $\Sigma^{-1/4} \Sigma \Sigma^{-1/4}$
+
+```{r}
+pop.sig1.inv1on4 <- pop.sig1.eig$vectors %*% diag(pop.sig1.eig$values^(-1/4)) %*% t(pop.sig1.eig$vectors)
+
+pop.sig1.iv <- as.matrix(pop.sig1.inv1on4) %*% as.matrix(pop.sig1) %*% as.matrix(pop.sig1.inv1on4)
+
+knitr::kable(pop.sig1.iv, booktabs=T, caption="\\label{fig:table_sigmaiv}") %>% kableExtra::kable_styling(latex_options=c("striped", "scale_down", "HOLD_position"))
+```
+
+Table \ref{fig:table_sigmaiv} shows the matrix result of
+$\Sigma^{-1/4} \Sigma \Sigma^{-1/4}$
+
+
+### Question 2
+\
+Consider the abalone data. We want to compate performance of linear regression and PCR on the raw abalone data.
+
+```{r}
+coln <- c(
+"Sex", # nominal M, F, and I (infant)
+"Length", # continuous mm Longest shell measurement
+"Diameter", # continuous mm perpendicular to length
+"Height", # continuous mm with meat in shell
+"Whole_weight", # continuous grams whole abalone
+"Shucked_weight", # continuous grams weight of meat
+"Viscera_weight", # continuous grams gut weight (after bleeding)
+"Shell_weight", # continuous grams after being dried
+"Rings" # integer +1.5 gives the age in years
+)
+abalone <-data.table::fread(file="../data/abalone.csv")
+colnames(abalone) <- coln
+```
+
+#### (a) Linear Regression for Raw Data
+\
+
+Full linear model for the raw data:
+```{r}
+big.lm <- lm(Rings ~ Length + Height + Whole_weight + Shucked_weight + Viscera_weight + Shell_weight, data=abalone)
+summary(big.lm)
+```
+
+The order to add variables is in the below list. The order was found by manually running `add1` and `update` using a full and a null `lm` object until the full order to add variables was found. These calculations were removed, and replaced with a nicer looking `for` loop, and a dataframe to keep everything neat looking.
+
+```{r}
+glancerows <- data.frame()
+a.lm.fwd <- a.lm.null <- lm(Rings~1, abalone)
+modelno <- 0
+glrow <- data.frame(modelno=modelno, sigma=glance(lm(a.lm.fwd))$sigma, added="none")
+glancerows <- rbind(glancerows, glrow)
+
+pred.lm <- list("Shell_weight", "Shucked_weight", "Length", "Whole_weight", "Height", "Viscera_weight")
+
+for (coeff in pred.lm) {
+  modelno <- modelno+1
+  
+  a.lm.fwd <- update(a.lm.fwd, paste(".~.+", coeff))
+  
+  glrow <- data.frame(modelno=modelno, sigma=glance(lm(a.lm.fwd))$sigma, added=coeff)
+  
+  glancerows <- rbind(glancerows, glrow)
+  #print(add1(a.lm.fwd, big.lm, test="F"))
+}
+print(glancerows)
+```
+
+The above dataframe tells us the residual standard deviation (`sigma`), for each number of predictors (`modelno`, where the latest predictor added is in `var`. We can see that at the end, the residual standard error after all predictors have been added is equal to that of the full model, shown above.
+
+#### (b) PCR
+\
+```{r}
+abalone.pca <- prcomp(subset(abalone, select=c("Length", "Height", "Whole_weight", "Shucked_weight", "Viscera_weight", "Shell_weight")))
+
+abalone.pc <- data.frame(cbind(abalone.pca$x, abalone$Rings))
+colnames(abalone.pc)[7] <- "Rings"
+```
+
+Full linear model for the PCA data
+```{r}
+big.lm.pc <- lm(Rings~PC1+PC2+PC3+PC4+PC5+PC6, data=abalone.pc)
+summary(big.lm.pc)
+```
+
+Again, the order of PCs to add to the model during forward selection was done manually, and then I only kept the neat `for` loop for demonstration purposes.
+
+```{r}
+# Highest absolute contribution for abalone data PCs
+hc_abalone_pc <- function(pc) {
+  rot <- abalone.pca$rotation
+  ix <- apply(rot, 2, function(x) which(abs(x)==max(abs(x))))[pc]
+  varname <- rownames(rot)[ix]
+  varcont <- rot[ix, pc]
+  return(list(varname, varcont))
+}
+```
+
+```{r}
+glancerows.pc <- data.frame()
+a.lm.fwd <- a.lm.null <- lm(Rings~1, abalone.pc)
+modelno <- 0
+glrow <- data.frame(modelno=modelno, sigma=glance(lm(a.lm.fwd))$sigma, added="na", HC_var="na", HC="na")
+glancerows.pc <- rbind(glancerows.pc, glrow)
+
+pred.lm <- list("PC1", "PC2", "PC6", "PC3", "PC4", "PC5")
+
+for (coeff in pred.lm) {
+  modelno <- modelno+1
+  
+  a.lm.fwd <- update(a.lm.fwd, paste(".~.+", coeff))
+  
+  hc <- hc_abalone_pc(coeff)
+  glrow <- data.frame(modelno=modelno, sigma=glance(lm(a.lm.fwd))$sigma, added=coeff, HC_var=hc[[1]], HC=hc[[2]])
+  
+  glancerows.pc <- rbind(glancerows.pc, glrow)
+  #print(add1(a.lm.fwd, big.lm, test="F"))
+}
+print(glancerows.pc)
+```
+
+The dataframe above shows the number of variables in the model (`modelno`), the current model's residual standard deviation (`sigma`), what was just added to the model (`added`), and the variable name and amount that most contributed to the current principal component (`HC_var` and `HC`, for "Highest Contribution")
+
+#### (c) Plot the residual standard deviation against the number of variables for both the linear regression, and the PCR.
+
+```{r lr.pcr, fig.width=5, fig.height=3, fig.cap="\\label{fig:lr.pcr}Linear Reg. vs PC Reg."}
+plt.2c1 <- ggplot(glancerows, aes(x=factor(modelno), y=sigma, label=added, colour="LR", group="LR")) +
+  geom_point(size=3) +
+  geom_line() +
+  geom_point(data=glancerows.pc, aes(colour="PCR", group="PCR"), size=3) +
+  geom_line(data=glancerows.pc, aes(colour="PCR", group="PCR")) +
+  labs(x="Num. Predictors Added", y="Residual Standard Deviation")
+
+print(plt.2c1)
+```
+
+#### (d)
+\
+Figure \ref{fig:lr.pcr} shows the residual standard deviation (RSD) vs the number of predictors added to each model, where red represents the linear regression, and the blue is the PCR. 0 predictors added gives the same RSD, since they are both the null model against `Rings`. Interestingly at 1 predictor, the linear regression has a lower RSD than the PCR. This is probably due to the fact that PC scores are only used in maximising the variance in the regressor data, but in least squares regression the response is taken into account. At 2 predictors however, the PCR is better than the linear model at 3 predictors.
+
+Since PCR doesn't use any information from the response variable, the linear regression is likely  a better choice here, as the data is is gathered for the purpose of predicting the age (number of rings) of abalone based on physical characteristics. Since the linear regression uses information from the response, I believe this is a better approach to finding a fit for the data.
+
+
+### Question 3
+\
+
+#### (a) Repeat what was done in Example 6.6. List the values of the strengths of the correlations, and show the four CC plots
+
+```{r}
+bhdf.x1 <- subset(Boston, select=c("crim", "indus", "nox", "dis", "rad", "ptratio", "black")) %>% scale()
+bhdf.x2 <- subset(Boston, select=c("rm", "age", "tax", "medv")) %>% scale()
+```
+
+
+```{r cca.scores, fig.cap="\\label{fig:cca.scores}Score plots for $\\mathbf{U}_\\bullet j, \\mathbf{V}_\\bullet j$"}
+CCA <- cancor(bhdf.x1, bhdf.x2)
+
+bhdf.x1.mat <- as.matrix(bhdf.x1)
+bhdf.x2.mat <- as.matrix(bhdf.x2)
+
+U <- as.data.frame(bhdf.x1.mat %*% CCA$xcoef)
+V <- as.data.frame(bhdf.x2.mat %*% CCA$ycoef)
+colnames(U) <- paste0("CCx.", 1:4)
+colnames(V) <- paste0("CCy.", 1:4)
+
+plt.3a1 <- ggplot(cbind(U, V), aes(x=CCx.1, y=CCy.1)) +
+  geom_point(alpha=0.3)
+
+plt.3a2 <- ggplot(cbind(U, V), aes(x=CCx.2, y=CCy.2)) +
+  geom_point(alpha=0.3)
+
+plt.3a3 <- ggplot(cbind(U, V), aes(x=CCx.3, y=CCy.3)) +
+  geom_point(alpha=0.3)
+
+plt.3a4 <- ggplot(cbind(U, V), aes(x=CCx.4, y=CCy.4)) +
+  geom_point(alpha=0.3)
+
+pw <- (plt.3a1 + plt.3a2) / (plt.3a3 + plt.3a4)
+
+print(pw)
+```
+
+\
+There are about 132 points located in the clump that can be seen in Figure \ref{fig:cca.scores}, bottom left. The rest of the data is clumped up in the top right. This causes the data to behave similarly to two points, and its easy to draw a line between two points.
+
+The correlations strengths:
+```{r}
+CCA$cor
+```
+
+These are equal to the singular values of $\hat{C}$. The first singular value is very high, much higher than the 3 others, which decrease quickly. This is likely die to the fact that the first score pair has two distinct clusters of points, which will behave as if it were simply two points, which suggests a strong correlation. However, this says nothing about the correlations within the clusters themselves.
+
+#### (b) Calculate the PCA of $\mathbb{X}^{[1]}$. Repeat (a) with the first 5D PC data instead of the original $\mathbb{X}^{[1]}$, and the $\mathbb{X}^{[2]}$ data.
+\
+```{r}
+bhdf.x1.pca <- prcomp(bhdf.x1, scale=TRUE)
+# PCA $x represents the scores/loadings
+bhdf.x1.pca.data <- bhdf.x1.pca$x[,1:5]
+```
+
+```{r cca.pca.scores, fig.cap="\\label{fig:cca.pca.scores}Score plots for $\\mathbf{U}_\\bullet j, \\mathbf{V}_\\bullet j$, using PC data on X1"}
+CCA1 <- cancor(bhdf.x1.pca.data, bhdf.x2)
+
+bhdf.x1.mat <- as.matrix(bhdf.x1.pca.data)
+bhdf.x2.mat <- as.matrix(bhdf.x2)
+
+U <- as.data.frame(bhdf.x1.mat %*% CCA1$xcoef)
+V <- as.data.frame(bhdf.x2.mat %*% CCA1$ycoef)
+colnames(U) <- paste0("CCx.", 1:4)
+colnames(V) <- paste0("CCy.", 1:4)
+
+plt.3b1 <- ggplot(cbind(U, V), aes(x=CCx.1, y=CCy.1)) +
+  geom_point(alpha=0.3)
+
+plt.3b2 <- ggplot(cbind(U, V), aes(x=CCx.2, y=CCy.2)) +
+  geom_point(alpha=0.3)
+
+plt.3b3 <- ggplot(cbind(U, V), aes(x=CCx.3, y=CCy.3)) +
+  geom_point(alpha=0.3)
+
+plt.3b4 <- ggplot(cbind(U, V), aes(x=CCx.4, y=CCy.4)) +
+  geom_point(alpha=0.3)
+
+pw <- (plt.3b1 + plt.3b2) / (plt.3b3 + plt.3b4)
+
+print(pw)
+```
+
+And the correlation strengths:
+
+```{r}
+CCA1$cor
+```
+
+#### (c) Use $\mathbb{X}^{[1]}$ from (a), and add variables `zn` and `lstat` to $\mathbb{X}^{[2]}$. Repeat again.
+\
+```{r}
+bhdf.x2.c <- subset(Boston, select=c("rm", "age", "tax", "medv", "zn", "lstat")) %>% scale()
+```
+
+```{r cca.scores2, fig.width=10, fig.height=10, fig.cap="\\label{fig:cca.scores2}Score plots for $\\mathbf{U}_\\bullet j, \\mathbf{V}_\\bullet j$, with extra features in X2"}
+CCA2 <- cancor(bhdf.x1, bhdf.x2.c)
+
+bhdf.x1.mat <- as.matrix(bhdf.x1)
+bhdf.x2.mat <- as.matrix(bhdf.x2.c)
+
+U.c <- as.data.frame(bhdf.x1.mat %*% CCA2$xcoef)
+V.c <- as.data.frame(bhdf.x2.mat %*% CCA2$ycoef)
+colnames(U.c) <- paste0("CCx.", 1:6)
+colnames(V.c) <- paste0("CCy.", 1:6)
+
+plt.3c1 <- ggplot(cbind(U.c, V.c), aes(x=CCx.1, y=CCy.1)) +
+  geom_point(alpha=0.3)
+
+plt.3c2 <- ggplot(cbind(U.c, V.c), aes(x=CCx.2, y=CCy.2)) +
+  geom_point(alpha=0.3)
+
+plt.3c3 <- ggplot(cbind(U.c, V.c), aes(x=CCx.3, y=CCy.3)) +
+  geom_point(alpha=0.3)
+
+plt.3c4 <- ggplot(cbind(U.c, V.c), aes(x=CCx.4, y=CCy.4)) +
+  geom_point(alpha=0.3)
+
+plt.3c5 <- ggplot(cbind(U.c, V.c), aes(x=CCx.5, y=CCy.5)) +
+  geom_point(alpha=0.3)
+
+plt.3c6 <- ggplot(cbind(U.c, V.c), aes(x=CCx.6, y=CCy.6)) +
+  geom_point(alpha=0.3)
+
+pw <- (plt.3c1 + plt.3c2) / (plt.3c3 + plt.3c4) / (plt.3c5 + plt.3c6)
+
+print(pw)
+```
+
+And the correlation strengths:
+
+```{r}
+CCA2$cor
+```
+
+#### (d) Compare parts (a) - (c).
+\
+Between (a) and (b), the strengths of the correlations go down slightly, suggesting a PCA on the data is not a good idea before performing CCA. This may be because PCA could ignore variables which do not have a large variance, but still contribute greatly to another part of the data.
+
+However, (c) shows a higher correlation in the first 3 canonical covariates, suggesting there is some useful information in the added variables. The first score plot shows the clusters mentioned in (a) are slightly more spread out and suggesting a linear relationship within them, which was not obvious in the (a) and (b). Clearly (c) is the best outcome, as the correlations are high, and the suspicious clusters in the first score plot are less mysterious (looking more linear).
+
+#### (e) Carry out a hypothesis test for the data in part (c) using statistic $T_k$ from Lecture 5, and correlation strengths from (c). Report the p-values.
+
+```{r cancor1.dens, fig.width=12, fig.height=4, fig.cap="\\label{fig:cancor1.dens}Density plots for part (c) data, first CC score densities"}
+plt.3e1 <- ggplot(U.c, aes(x=CCx.1, fill=1, colour=1)) +
+  geom_density(alpha=0.1) +
+  labs(x="CC x score") +
+  theme(legend.position="none")
+
+plt.3e2 <- ggplot(V.c, aes(x=CCy.1, fill=1, colour=1)) +
+  geom_density(alpha=0.1) +
+  labs(x="CC y score") +
+  theme(legend.position="none")
+
+print(plt.3e2 + plt.3e2)
+```
+
+\
+We can see in Figure \ref{fig:cancor1.dens} that the scores are certainly not normal, with two modes for both density estimates. This is strong evidence that the data is not Gaussian, and the hypothesis tests may not be satisfied.
+
+```{r}
+Tk <- function( k, n, d1, d2, vv ){
+  # vv is the correlations 
+  # d1 is number of features in X1
+  # d2 number of features in X2 
+  rr <- length( vv )
+  Tkout <- -(n-(d1 + d2 + 3) / 2) * log(prod(1 - vv[(k+1):rr]^2))
+  # compare with chisq on (d1-k) * (d2-k) dof
+  dof <- (d1-k) * (d2-k)
+  pval <- pchisq(Tkout, df=dof, lower.tail=FALSE)
+  list(Tkout=Tkout, pval=pval, DoF=dof)
+}
+```
+
+Calculate all test statistics $T_k$ for the data:
+
+```{r, fig.cap="\\label{table:cc.covariates}"}
+res <- data.frame()
+for (i in (1:min(NCOL(bhdf.x1), NCOL(bhdf.x2.c)))-1) {
+  test <- Tk(k=i, n=NROW(bhdf.x1), d1=NCOL(bhdf.x1), d2=NCOL(bhdf.x2.c), vv=CCA2$cor)
+  res <- rbind(res, test)
+}
+
+res
+```
+
+#### (f) Using 2% significance level, decide on the number of nonzero correlation coefficients based on results from (e).
+\
+First let's define the hypotheses:
+
+
+\[\makebox[\linewidth]{$\displaystyle
+  \begin{aligned}
+    H_0^k&:\upsilon_1 \ne 0, ..., \upsilon_k \ne 0 \\
+      &:\upsilon_{k+1} = 0, ..., \upsilon_r = 0 \\
+      \\
+      H_1^k&:\upsilon_j \ne 0 \quad \text{for} \quad j \ge k+1
+  \end{aligned}$
+}\]
+
+Let's start with the last canonical covariate pair (k=5). Looking at Table \ref{table:cc.covariates}, we have $T_k \approx 7.936$, and a critical value of...:
+
+```{r}
+qchisq(0.98, 2)
+```
+... at 2 degrees of freedom. Since our $T_5$ statistic exceeds the critical value at 2% significance. As mentioned before however, the data seems to not be normal, and we must be careful when doing the tests when they are close to the critical value.
+
+We will now look at the second-to-last pair now (k=4), shown in line 5 in Table \ref{table:cc.covariates}. Critical value at 6 DoF:
+```{r}
+qchisq(0.98, 6)
+```
+And our test result is $T_k = 29.89$. This value is much higher than the critical value, and we can conclude that the 5th canonical covariate correlation is probably non-zero, and all of the pairs of CC scores before this are probably correlated. The correlation coefficients corresponding to the first 5 canonical covariates are not necessarily zero.
+
+In conclusion, since the data is clearly bimodal and certainly not normally distributed, I will throw away the result of the $T_5$ test since its result was very close to the critical value, and accept $H_1^5$. This means that the first 5 pairs of canonical covariates are likely correlated, and $\upsilon_6 = 0$ is likely true.
+
+
+### Question 4
+\
+Consider the 13D wine data from Lab 6. We want to compare a factor analysis of all observations with those from class 1 and 2. Class membership is given in the first column of the dataset.
+
+```{r}
+wine <- read.csv("../data/wine.csv", header=FALSE)
+colnames(wine) <- c("Group", "Alcohol", "Malic_acid", "Ash", "Alkalinity_of_ash", "Magnesium", "Total_phenols", "Flavanoids", "Nonflavanoid_phenols", "Pyroanthocyanins", "Color_intensity", "Hue", "OD280/OD315_oDW", "Proline")
+wine12 <- wine[(wine$Group == 1 | wine$Group == 2),-1]
+wine   <- wine[,-1]
+```
+
+#### (a) Scale the data. How many observations in class 1 and 2 data?
+\
+R code below to show data scaling
+```{r, echo=TRUE}
+wine   <- wine %>% scale(center=FALSE)
+wine12 <- wine12 %>% scale(center=FALSE)
+```
+```{r}
+# dim outputs in row, column format
+dim(wine12)
+```
+
+Above we can see that there are 130 rows, and 13 columns in the `wine12` dataframe. This means there are 130 observations and 13 features.
+
+#### (b) Using `wine` and  `wine12` seperately:
+
+##### i. Calculate the sample covariance matrix of the scaled data, and the eigenvalues of this matrix. Calculate $\hat{\sigma}^2$, where $k=2$
+\
+```{r}
+sigma.12 <- cov(wine12)
+sigma.f  <- cov(wine)
+
+knitr::kable(sigma.12, booktabs=T, caption="\\label{table:cov.wine12}") %>% kableExtra::kable_styling(latex_options=c("striped", "scale_down", "HOLD_position"))
+```
+```{r}
+knitr::kable(sigma.f, booktabs=T, caption="\\label{table:cov.wine}") %>% kableExtra::kable_styling(latex_options=c("striped", "scale_down", "HOLD_position"))
+```
+```{r}
+eig.12 <- eigen(sigma.12)
+eig.12$values
+```
+
+Above are the eigenvalues of the covariance matrix of `wine12` shown in Table \ref{table:cov.wine12}. And below are the eigenvalues for the covariance matrix of the full wine data shown in Table \ref{table:cov.wine}
+```{r}
+eig.f <- eigen(sigma.f)
+eig.f$values
+```
+
+\begin{equation}
+\hat{\sigma}^2 = \frac{1}{d-k} \sum_{j>k} \hat{\lambda}_j
+\end{equation}
+
+Below is the value of $\hat{\sigma}^2$ for the data set `wine12`
+
+```{r}
+sig.hat.12 <- 1/(NROW(wine12)-2) * sum(eig.12$values[3:length(eig.12$values)])
+sig.hat.12
+```
+
+And below is $\hat{\sigma}^2$ for the full set.
+
+```{r}
+sig.hat.f <- 1/(NROW(wine)-2) * sum(eig.f$values[3:length(eig.f$values)])
+sig.hat.f
+```
+
+##### ii. Calculate and list factor loadings for the 2-factor principal axis factoring using $\hat{\sigma}^2$
+\
+I will use $\hat{\sigma}^2$ as the small constant $c$ in the error matrix $\Omega = c\mathbb{I}$:
+```{r}
+omega.12 <- diag(rep(sig.hat.12, 13))
+omega.f  <- diag(rep(sig.hat.f, 13))
+```
+
+We can now find the estimate of the factor loadings' covariance matrix $\Sigma_A$:
+```{r}
+sigma.A.12 <- sigma.12 - omega.12
+sigma.A.f  <- sigma.f - omega.f
+
+knitr::kable(sigma.A.12, booktabs=T, caption="\\label{table:cov2.wine12}") %>% kableExtra::kable_styling(latex_options=c("striped", "scale_down", "HOLD_position"))
+```
+
+```{r}
+knitr::kable(sigma.A.f, booktabs=T, caption="\\label{table:cov2.wine}") %>% kableExtra::kable_styling(latex_options=c("striped", "scale_down", "HOLD_position"))
+```
+
+Tables \ref{table:cov2.wine12} and \ref{table:cov2.wine} both show $\Sigma_A$ for the class 1 and 2 set, and the full set respectively
+
+Now we can estimate the factor loadings $A$ with a spectral decomposition of $\Sigma_A$.
+
+For the class12 set:
+
+```{r}
+eig.A.12 <- eigen(sigma.A.12)
+eig.A.f  <- eigen(sigma.A.f)
+
+gamma.hat.12  <- eig.A.12$vectors[,1:2]
+lambda.hat.12 <- diag(eig.A.12$values[1:2]^(1/2))
+A.hat.12   <- gamma.hat.12 %*% lambda.hat.12
+
+gamma.hat.f  <- eig.A.f$vectors[,1:2]
+lambda.hat.f <- diag(eig.A.f$values[1:2]^(1/2))
+A.hat.f   <- gamma.hat.f %*% lambda.hat.f
+
+A.hat.12
+```
+
+And for the full set:
+
+```{r}
+A.hat.f
+```
+
+The two tables above show $A$, the factor loadings, for both the class12 set and the full set. 
+
+##### iii. Show biplots of the loadings
+\
+
+Biplots: Figure \ref{fig:biplot1} and Figure \ref{fig:biplot2}
+
+```{r, fig.height=8, fig.width=8, fig.cap="\\label{fig:biplot1}Loadings for class 1 and 2 set"}
+wine.pca <- prcomp(wine)
+biplot(wine.pca$x, A.hat.12, col=c("white", "blue"))
+```
+
+
+```{r, fig.width=8, fig.height=8, fig.cap="\\label{fig:biplot2}Loadings for full set"}
+biplot(wine.pca$x, A.hat.f, col=c("white", "blue"))
+```
+
+##### iv. Compare the differences between the two datasets
+\
+
+The biplots are clearly quite different, suggesting that the loadings from the third class only in the full set have quite a large influence on the factors.
+
+#### (c) ML factor analysis. Use argument `rotation="none"`. Do not use any other commands.
+\
+Complete these parts with `wine` and `wine12` seperately again:
+
+##### i. Calculate and list factor loadings for the 2-factor ML without rotation.
+\
+The loadings for the class 1 and 2 set:
+
+```{r}
+wine.f.fa  <- factanal(wine, 2, rotation="none")
+wine.12.fa <- factanal(wine12, 2, rotation="none")
+
+wine.12.loadings <- wine.12.fa$loadings
+wine.12.loadings
+```
+
+And the loadings for the full set: 
+
+```{r}
+wine.f.loadings <- wine.f.fa$loadings
+wine.f.loadings
+```
+
+Biplots: Figure \ref{fig:biplot3} and Figure \ref{fig:biplot4}
+
+```{r, fig.width=8, fig.height=8, fig.cap="\\label{fig:biplot3}Loadings for class 1 and 2 set with MLE FA"}
+biplot(wine.pca$x, wine.12.loadings[,1:2], col=c("white", "blue"))
+```
+
+```{r, fig.width=8, fig.height=8, fig.cap="\\label{fig:biplot4}Loadings for full set with MLE FA"}
+biplot(wine.pca$x, wine.f.loadings, col=c("white", "blue"))
+```
+
+##### ii. Carry out hypothesis tests
+
+Can't figure out how to calculate this step...
+
+
+
+
+
+

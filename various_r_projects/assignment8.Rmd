@@ -1,0 +1,429 @@
+---
+title: "Assignment 2"
+author: "Kai Bagley - 21984315"
+date: "01/05/2022"
+output:
+  pdf_document:
+    fig_caption: yes
+fig_width: 8
+fig_height: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      tidy = TRUE)
+```
+
+```{r, results='hide'}
+library("ggplot2")
+library("patchwork")
+library("MASS")
+library("glmnet")
+library("nnet")
+library("ISLR2")
+library("tidyverse")
+library("magrittr")
+library("leaps")
+```
+
+## Question 1
+
+Consider the `Weekly` data of question 7, p222 of JWHT, with predictors `Lag1`, `Lag2`, and `Lag4`, and use `Direction` as the response for classification. We want to compare the performance of logistic regression, LDA, and QDA using the default parameters of each approach. 
+
+
+### (a) For each of the three approaches, explain what the tuning parameter is.
+
+The tuning parameter represents a parameter that can be changed by a human, or tuned. In the case of a logistic model, when we run `glm` with `family = binomial`, we get an output of a real number between 0 and 1. Since we are classifying, we can interpret this as a probability of an observation being in a class, and say that if this number is greater than $\tau$, then observation is a member of class 1, otherwise class 0. In this case, $\tau$ is a tuning parameter, as we can choose this cutoff point for the classfier.
+
+For the LDA, the only tunable parameter is the prior probability of class membership.
+
+QDA also has prior probabilities, same as LDA
+
+### (b) Separately for the three approaches, calculate the LOOCV error and list your results in a single table.
+
+LOOCV involves leaving one observation out per model, and training on all data but the one separate observation. Then testing the model on that one obs. and computing the desired statistic using that one obs. 
+
+```{r}
+res_logreg <- rep(0, NROW(Weekly))
+
+# For loop over all obs
+for (i in 1:NROW(Weekly)) {
+  # Train model on all but left-out obs
+  model_loo <- glm(Direction~Lag1+Lag2+Lag4, data = Weekly, family = binomial, subset = -i)
+  # Make prediction on the left-out obs and assign a name (levels)
+  pred_loo  <- levels(Weekly$Direction)[(predict(model_loo, newdata = Weekly[i, ]) > 0.5)+1]
+  # Store in res as 1 if incorrect
+  res_logreg[i] <- Weekly$Direction[i] != pred_loo
+}
+```
+
+```{r}
+res_lda <- rep(0, NROW(Weekly))
+
+# For loop over all obs
+for (i in 1:NROW(Weekly)) {
+  # Train model on all but left-out obs
+  model_loo <- lda(Direction~Lag1+Lag2+Lag4, data = Weekly, subset = -i)
+  # Make prediction on the left-out obs
+  pred_loo  <- predict(model_loo, newdata = Weekly[i, ])
+  # Store in res as 1 if incorrect
+  res_lda[i] <- Weekly$Direction[i] != pred_loo$class
+}
+```
+
+```{r}
+res_qda <- rep(0, NROW(Weekly))
+
+# For loop over all obs
+for (i in 1:NROW(Weekly)) {
+  # Train model on all but left-out obs
+  model_loo <- qda(Direction~Lag1+Lag2+Lag4, data = Weekly, subset = -i)
+  # Make prediction on the left-out obs
+  pred_loo  <- predict(model_loo, newdata = Weekly[i, ])
+  # Store in res as 1 if incorrect
+  res_qda[i] <- Weekly$Direction[i] != pred_loo$class
+}
+```
+
+```{r}
+list(LogReg=res_logreg, LDA=res_lda, QDA=res_qda) %>% 
+  lapply(mean) %>% 
+  data.frame %>% 
+  t %>% 
+  knitr::kable(col.names = "LOOCV est. error")
+```
+
+Please see the above table.
+
+### (c) Interpret and compare your results and comment
+
+Part (b) shows the table for the estimated LOOCV error of each of the 3 classification approaches. Logistic regression has the highest error, and LDA has the lowest.
+
+
+## Question 2
+
+The City Population data of Cochran data contains the population of 49 cities in the USA for both 1920 and 1930.
+
+Of interest is the ratio of the means of the two years, as this ratio would enable the estimation of the total population of the USA in 1930 from the 1920 figures. If the cities form a random sample given as pairs $(U_i, X_i)$ of the population values of that city in 1920 and 1930, then the total 1930 population is the product of the total population in 1920 and $\theta$, where $\theta = E(X)/E(U)$ is the ratio of the expected value of $X$ and $U$. This ratio is the parameter of interest.
+
+As there is no obvious parametric model for the distribution of $(U, X)$, we estimate $\theta$ by the ratio of the sample analogues, so by $T = \bar{X}/\bar{U}$ and then estimate the uncertainty in $T$ using bootstrap ideas . To do so, carry out the steps in part (a) - (f).
+
+### (a) Download `bigcity.csv` and show a scatterplot of the data with the 1920 data on the x-axis. Comment on the plot with respect to the adequacy of the approach of using $T$ to estimate the 1930 population.
+
+```{r}
+bigcity <- read.csv("../data/bigcity.csv")
+```
+
+```{r}
+bigcity %>% 
+  ggplot(aes(x=u, y=x)) +
+  geom_point() +
+  labs(x="1920", y="1930")
+```
+
+There looks to be a linear relationship between the values, therefore using $T$ to estimate the 1930 population should be a reasonably good approach.
+
+### (b) Download the randomly chosen bootstrap dataset. For the cities given in the bootstrap dataset, find the mean and standard deviations of the 1920 and 1930 data. Report the ratio of the two means.
+
+```{r}
+subp <- read.csv("../data/city_subp.csv")
+subp_df <- bigcity[subp$index, ]
+```
+
+```{r}
+subp_means <- colMeans(subp_df[, 2:3])
+subp_stdev <- sapply(subp_df[, 2:3], sd)
+
+subp_means
+subp_stdev
+cat("mean ratio (X/U):", subp_means[2]/subp_means[1])
+```
+
+### (c) Generate $B = 500$ bootstrap samples from the `bigcity` data using the command `sample` with `replace = TRUE`. For $k = 1, ..., B$ bootstrap samples calculate the 1920 means $\bar{m}^{\star k}_{20}$, the 1930 means $\bar{m}^{\star k}_{30}$, and the ratios $T^{\star k}$. Show plots:
+
+* Scatterplot of the pairs, with 1920 values on the x-axis
+* Smoothed histogram of the means $\bar{m}^{\star k}_{20}$
+* Smoothed histogram of the means $\bar{m}^{\star k}_{30}$
+* Smoothed histogram of the ratios $T^{\star k}$
+
+```{r, results='hide'}
+# Want to sample rows from bigcity
+# Want sample size 50, and 500 of those
+
+# Use sample to generate 50 indices to select from df
+
+# Do that B = 500 times
+bootstrap_bigcity <- lapply(1:500, function(x) bigcity[sample(nrow(bigcity), replace = T), ])
+
+# Now we calculate means for each u and x column.
+calculate_t <- function(i) {
+  years <- colMeans(bootstrap_bigcity[[i]])[2:3]
+  t <- years["x"] / years["u"]
+  names(t) <- "t"
+  return(c(years, t))
+}
+
+boot_bc_Tratios <- lapply(1:500, calculate_t) %>% 
+  as.data.frame() %>% 
+  t %>% 
+  as.data.frame()
+
+# Scatterplot
+boot_bc_Tratios %>% 
+  ggplot(aes(x = u, y = x)) +
+  geom_point(alpha = 0.3) +
+  labs(title = "Bootstrap means", 
+       x = "1920s", 
+       y = "1930s")
+
+# Smoothed Histogram for 1930 and 1920
+boot_bc_Tratios %>% 
+  set_colnames(c("1920", "1930", "t")) %>% 
+  pivot_longer(!t, names_to = "var", values_to = "val") %>% 
+  ggplot(aes(x = val, fill = var)) +
+  geom_density(size = 1, alpha = 0.4) +
+  labs(x = "Population means", fill = "Year")
+
+# Smoothed histogram of the ratios (T)
+boot_bc_Tratios %>% 
+  ggplot(aes(x = t)) +
+  geom_density(size = 1, alpha = 0.3, fill = "green") +
+  labs(x = "Population means ratio (T)")
+```
+
+Please see above for all the required plots. Scatterplot is for part 1, the second plot has the smoothed histogram for both $\bar{m}^{\star k}_{20}$ and $\bar{m}^{\star k}_{30}$. And the final histogram is the plot for the ratio $T^{\star k}$.
+
+### (d) Use the B values of $T^{\star k}$ obtained in part (c) to calculate a bootstrap estimate of the standard error $T$ based on equation (5.8) in the textbook JWHT. Report the mean of the $T^{\star k}$ values and the bootstrap estimate of their standard error.
+
+```{r}
+# Bootstrap estimate where a is full bootstrap
+bootstrap_se_est <- function(a) {
+  sum1 <- (1/nrow(a)) * sum(a)
+  sum2 <- (1/(nrow(a)-1)) * sum((a - sum1)^2)
+  res  <- sqrt(sum2)
+  return(res)
+}
+  
+t_est_se <- boot_bc_Tratios["t"] %>% bootstrap_se_est 
+t_est_m  <- boot_bc_Tratios["t"] %>% colMeans
+
+cat("mean:", t_est_m, "\n", " se:", t_est_se)
+```
+
+### (e) Comment on the shape of the histograms in part (c) and interpret your answers obtained in part (d)
+
+The two histograms (densities) for 1920 and 1930 show a clear increase in mean from 1920 to 1930, and also an increase in variance. They are both normally distributed, as expected thanks to the central limit theorem.
+
+The histogram of $T^{\star k}$ ratios are also normally distributed, but with a slight skew right.
+
+The mean given in (d) represents the estimate of the ratio of bootstrap populations, given by $T^{\star k} = \frac{\bar{m}^{\star k}_{30}}{\bar{m}^{\star k}_{20}}$. This serves as an estimate of $\theta$, such that $\theta = \frac{E(X)}{E(U)}$, which is the parameter of interest given in the Q2 description. The standard error is just the error of the estimate; the bootstrap standard error of the mean.
+
+### (f) Would it make sense to include the estimates obtained in part (b) in the bootstrap uncertainty calculations of part (d)? Justify your answer.
+
+For my bootstrap calculations, I used 500 bootstrap sets, each of 49 observations. It wouldn't make much sense to include the estimates in part (b) in this calc as there are already 500 sets, all the same size, and it doesn't make much sense to add another set to it, that is sampled from a small subset of the actual data.
+
+If all of the bootstrap sets were size 19, then it may make sense to include them.
+
+
+## Question 3
+
+Consider the `Hitters` data from Lab 9. Use `Salary` as response variable. As in Q1 of Lab 9, remove observations with missing `Salary` values and continue working with the remainder of the data which we refer to as the `Hitters` data.
+
+### (a) Perform forward selection of these data with `lm` by adding single terms of the linear regression.
+
+Number of `na`s in the data:
+
+```{r}
+Hitters[is.na(Hitters$Salary)==TRUE, ] %>% nrow
+```
+
+Remove these to get data of dimension:
+
+```{r}
+df_hitters <- Hitters %>% na.omit
+dim(df_hitters)
+```
+Create an empty and full linear model using forward stepwise model selection:
+
+```{r}
+hitters_lmf <-regsubsets(Salary~., data=df_hitters, method = "forward", nvmax=19)
+summary(hitters_lmf)$which
+```
+
+Above is shown the predictors added for each step, for the full model, showing the added predictors for each step
+
+### (b) Use RSS and  BIC to find the 'best' model in each case for (a). Call $\hat{p}_R$ and $\hat{p}_B$ the number of variables that are obtained with these best models.
+
+Above in part (a) is the best model found by using RSS. Now We will find the best model using BIC.
+
+```{r}
+hit_lmf_sum <- summary(hitters_lmf)
+hit_lmf_df  <- data.frame(bic=hit_lmf_sum$bic,
+                          rss=hit_lmf_sum$rss)
+
+hit_lmf_df %<>% 
+  mutate(min_rss = min(hit_lmf_df$rss) == hit_lmf_df$rss,
+         min_bic = min(hit_lmf_df$bic) == hit_lmf_df$bic)
+
+hit_lmf_df$nvar <- seq.int(nrow(hit_lmf_df))
+
+hit_lmf_df %>% 
+  ggplot(aes(x=nvar, y=rss)) +
+  geom_line() +
+  geom_point(aes(col = min_rss), size = 4) +
+  labs(x = "Number of predictors", col = "Best predictor considering RSS")
+
+hit_lmf_df %>% 
+  ggplot(aes(x=nvar, y=bic)) +
+  geom_line() +
+  geom_point(aes(col = min_bic), size = 4) +
+  labs(x = "Number of predictors", col = "Best predictor considering BIC")
+```
+
+```{r}
+best_rss_num <- hit_lmf_df$min_rss %>% which()
+best_bic_num <- hit_lmf_df$min_bic %>% which()
+
+cat("Best number of predictors for RSS:", best_rss_num)
+cat("\nBest number of predictors for BIC:", best_bic_num)
+```
+
+### (c) Perform best subset selection for the `Hitters` data. For the optimal number of predictors, $\hat{p}_R$ and $\hat{p}_B$, list the variables that are included in the best subset selection with these number of variables
+
+```{r}
+hitters_lmb <-regsubsets(Salary~., data=df_hitters, nvmax=19)
+
+summary(hitters_lmb)$which[best_rss_num, -1]
+```
+
+Above shows the variables included in best subset selecion, with $\hat{p}_R$ variables, and below shows the best with $\hat{p}_B$ variables.
+
+```{r}
+summary(hitters_lmb)$which[best_bic_num, -1]
+```
+
+### (d) Interpret and compare your results of the previous parts and comment
+
+For the best subset selection, the model with $\hat{p}_R$ is clearly the full model, as $\hat{p}_R = 19$, which is all of the predictors.
+
+In fact, forward selection and best subsets selection both perform the same, returning the same models for each number of predictors. This can be seen in the results of (a) for 6 predictors, and (c).
+
+
+## Question 4
+
+Consider the cleaned `Hitters` data of Lab 6, and use `Salary` as the response variable.
+
+### (a) Use the seed 406411 to generate a test and training subset of the `Hitters` data as outlined in Q3 of Lab 6
+
+```{r}
+set.seed(406411)
+train <- sample(c(TRUE, FALSE), nrow(df_hitters), rep=TRUE)
+test <- !train
+
+x <- model.matrix(Salary ~ ., df_hitters)[, -1]
+y <- df_hitters$Salary
+
+x_train <- x[train, ]
+x_test  <- x[test, ]
+y_train <- y[train]
+y_test  <- y[test]
+```
+
+### (b) Fit a linear model using least squares on the training set, and report the test error obtained
+
+Least squares is used by `lm`
+
+```{r}
+mod1  <- lm(Salary ~ ., df_hitters[train, ])
+pred1 <- predict(mod1, newdata = df_hitters[test, ])
+
+# mean squared error
+mean((df_hitters$Salary[test]-pred1)^2)
+```
+
+Above is the MSE of the least squares model trained on the training set, and predicting on the test set.
+
+### (c) Fit a ridge regression model on the training set separately for the following values of $\lambda = 10^\delta$, with $\delta = 0, 1, 2, 3, 4, 5$. Report the test error obtained for each of these values of $\lambda$.
+
+```{r}
+delta <- seq.int(0, 5, 1)
+lgrid <- 10^delta
+
+# alpha = 0 for a ridge regression
+mod2 <- glmnet(x_train, y_train, alpha = 0, lambda = lgrid)
+
+# Make predictions on the training and test sets
+pred2_tr <- predict(mod2, newx = x_train)
+pred2_ts <- predict(mod2, newx = x_test)
+
+# Find train and test MSE of predictions
+test_mse <- lapply(1:6, function(x) mean((y_test - pred2_ts[, x])^2)) %>% as.data.frame
+train_mse <- lapply(1:6, function(x) mean((y_test - pred2_tr[, x])^2)) %>% as.data.frame
+names(test_mse) <- delta
+names(train_mse) <- delta
+
+test_mse
+```
+
+Above are the 6 test MSE, and below are the 6 training MSE, one for each value of $\delta$ given in the question.
+
+```{r}
+train_mse
+```
+
+### (d) Fit a lasso model on the training set separately for the values of $\lambda$ given in (c). Report the test error obtained, as well as the number of non-zero coefficient estimates.
+
+```{r}
+# alpha = 1 for a lasso regression
+mod3 <- glmnet(x_train, y_train, alpha = 1, lambda = lgrid)
+pred3 <- predict(mod3, newx = x_test)
+
+pred3_mse <- 
+  lapply(1:6, function(x) mean((y_test - pred3[, x])^2)) %>% as.data.frame()
+names(pred3_mse) <- delta
+
+coef_count <- 
+  lapply(1:6, function(x) sum(coef(mod3)[-1, x] != 0))
+
+res <- rbind(pred3_mse, coef_count)
+
+res %>% 
+  set_rownames(c("MSE", "Count Coef. != 0")) %>% 
+  knitr::kable()
+```
+
+Above shows a results table, with the $\delta$ used as the column names, and row 1 being MSE, row 2 being count of non-zero coefficients.
+
+### (e) Discuss, compare and interpret your results.
+
+Straight away we can compare the best models (ones with lowest test error) of the 3 different methods:
+
+* Least squares   : $\approx 114564.1$
+* Ridge Regression: $\approx 111499.5$, at $\delta = 3$
+* LASSO Regression: $\approx 111500.1$, at $\delta = 4$, with 10 predictors
+
+Although they're all very similar in error, the two regularised models win the competition. Ridge may be better for more new data, as it includes all of the predictors.
+
+This is not necessarily the case though, as LASSO has just selected the 10 most important predictors, and the other 9 could mislead the models. However, the $\delta = 5$, $\text{MSE} \approx 112733.5$ LASSO model is barely worse while adding 5 predictors. This shows that extra predictors on top of the "best" 10 are barely influential, and negatively so.
+
+Interestingly the training error in part (c) is higher than the test error, this could be because it isn't overfitting, which would return high training error, but doing a good job at generalising, giving a lower test error. If this is what is happening, then the ridge model is a good model, and would be my recommendation of the two regularised models.
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+

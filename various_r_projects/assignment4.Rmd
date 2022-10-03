@@ -1,0 +1,405 @@
+---
+title: "Assignment 1"
+author: "Kai Bagley - 21984315"
+date: "15/08/2021"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    fig_caption: yes
+    includes:
+      in_header: headerfile.tex
+fig_width: 6
+fig_height: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      tidy = TRUE)
+```
+
+```{r, results='hide'}
+library("ggplot2")
+library("patchwork")
+library("GGally")
+library("MASS")
+library("reshape2")
+library("mvtnorm")
+```
+
+
+## Question 1
+
+### (a) Why is it important to describe the mathematical model we want to simulate from, and why should one not automatically choose the Gaussian model for a simulation?
+
+There are many different distributions a model can represent, for example the binomial distribution. When we simulate a mathematical model, we are trying to draw samples from a distribution that we have observed, and drawing from an incorrect distribution for a model will not return accurate samples of the model of interest.
+
+This is why it's important to describe a mathematical model as best we can, so we can accurately simulate the proper distribution, with accurate parameters (e.g. mean and covariance).
+
+### (b) Give two reasons why simulations should be reproducible.
+
+Since sampling from a simulation has an element of randomness to it, sometimes we may draw an outlier and/or a few extreme values, which somewhat affects the sample we take in a meaningful way.
+
+Also, reproducibility is critical to ensure credibility of calculations/experiments. If others are unable to effectively reproduce your results, then how can one expect to be properly peer reviewed. This enables others to verify your work, and if there exist any errors in calculation it will be much easier to detect these, since you can easily trace the data's path through your program.
+
+### (c) Give details of the variance calculation $\mathrm{var}(W_2)$ for Example 4.2 similar to those for $\mathrm{var}(W_1)$.
+
+Using the information given in the previous few slides in Lecture 2, we can calculate the following:
+
+\[\makebox[\linewidth]{$\displaystyle
+  \begin{aligned}
+    \mathrm{var}(W_2) 
+      &= \mathrm{var}(\vec{\eta}_2^\mathrm{T}\vec{X}) \\
+      &= \mathrm{var}(\eta_{21} X_{1} + \eta_{22} X_2) \\
+      &= \eta_{21}^2\mathrm{var}(X_1) + \eta_{22}^2\mathrm{var}(X_2) + 2\eta_{21}\eta_{22}\mathrm{cov}(X_1,X_2) \\
+      &= 0.31^2 \cdot 2.4 + 0.95^2 \cdot 1 + 2 \cdot 0.31 \cdot 0.95 \cdot (-0.5) \\
+      &\approx 0.84
+  \end{aligned}$
+}\]
+
+Which returns the same answer as in the lecture slides.
+
+
+## Question 2
+
+Consider the aircraft data with logged variables as in Question 2 of Lab 1. Divide the data into the 3 period groups.
+
+```{r}
+acdf <- read.csv("./aircraft.csv", stringsAsFactors=FALSE)
+
+# Add logged columns, and rename them
+acdf.log <- cbind(acdf[,1:2], log10(acdf[,3:NCOL(acdf)]))
+colnames(acdf.log)[3:8] <- paste("log", colnames(acdf[3:8]), sep="")
+```
+
+### (a) Show smoothed histograms of `logLength` and `logPower` separately for the three periods. Comment on the shapes of the histograms and how the change over time affects this shape.
+
+I'm assuming that what is meant by separately is that `logLength` and `logPower` are separate, rather than the three time periods.
+
+```{r}
+acdf.ll.mu <- aggregate(acdf.log[,5], list(acdf$Period), FUN=mean)
+acdf.lp.mu <- aggregate(acdf.log[,3], list(acdf$Period), FUN=mean)
+```
+
+```{r density,fig.width=12, fig.height=4, fig.cap="\\label{fig:density}Density plots"}
+dens_p1 <- ggplot(acdf.log, aes(x=logLength, group=Period, color=Period)) +
+  geom_density(aes(fill=Period), alpha=0.3) +
+  geom_vline(data=acdf.ll.mu, aes(xintercept=x, colour=Group.1))
+
+dens_p2 <- ggplot(acdf.log, aes(x=logPower, group=Period, color=Period)) +
+  geom_density(aes(fill=Period), alpha=0.3) +
+  geom_vline(data=acdf.lp.mu, aes(xintercept=x, colour=Group.1))
+
+print(dens_p1 + dens_p2)
+```
+
+Both `logPower` and `logLength` slowly flatten out as shown in Figure \ref{fig:density}, with later periods' distributions having far higher variance than the previous ones. This implies that over time, the engineering behind the planes improves enough to allow many different lengths and power levels to be effective in flight. In regard to the `logPower` plot, we can see the mean greatly increasing from $\approx 2.6$ to $\approx 3.5$ or so, showing that newer planes consume more power. Whether this be due to greater speeds/weights I am unsure of right now, but this is likely the case.
+
+### (b) Construct contour plots of the 2D smoothed histograms of the pairs (`logPower`, `logWeight`) and (`logSpeed`, `logLength`). Describe the shapes of the density plots and discuss how the change over time.\
+
+```{r contour, fig.width=12, fig.height=4, fig.cap="\\label{fig:contour}Contour/Scatter plots"}
+cont_p1 <- ggplot(acdf.log, aes(logPower, logWeight)) +
+  geom_density2d() +
+  geom_point(alpha=0.4, aes(color=factor(Period))) +
+  labs(color="Period")
+
+cont_p2 <- ggplot(acdf.log, aes(logSpeed, logLength)) +
+  geom_density2d() +
+  geom_point(alpha=0.4, aes(color=factor(Period))) +
+  labs(color="Period")
+
+print(cont_p1 + cont_p2)
+```
+
+Shown in Figure \ref{fig:contour}, there is clearly a strong correlation between the variables `logPower` and `logWeight`, and an obvious increase in both of these over time, with period 3 having a wide distribution of values, demonstrating a wider range of feasible weights and power levels, but the ability to create very high power and weight planes relative to the previous periods.
+
+There is not much of a correlation between `logSpeed` and `logLength`. We can see that in general, there is an increase in both variables as the time period increases, but between the variables themselves the correlation is very weak. Once again, it is obvious the engineering ability in period 3 is greater as there is a much wider distribution of speeds and lengths compared to the narrower distributions in the first 2 periods.
+
+
+### (c) For which pair of variables would you expect the largest change in correlation or shape of their density over time and why?
+
+Out of the above variables, and thinking about it logically, I'd imagine that the correlation between power and weight would stay roughly constant over time, but the correlation between range and the other variables surely changes a lot. As engines become more fuel-efficient, and designs become more aerodynamic, the range will increase greatly, so I'd guess range and weight. Other than this, if we include the variable `Year`, then year and power will be the greatest increase. As we saw in the above contour plots, the period 3 planes have a huge distribution of different power levels and sizes.
+
+
+## Question 3
+
+Using the same aircraft data as in Question 2
+
+### (a) Separately for each period, carry out a principal component analysis using `prcomp` based on the raw data.
+
+I will not include `Year`, as we only care about the period as a metric of time.
+
+```{r}
+# acdf[1:8] is the slice of the dataframe that is the raw data
+
+acdf.pd1 <- subset(acdf.log[2:8], Period==1)[2:7]
+acdf.pd2 <- subset(acdf.log[2:8], Period==2)[2:7]
+acdf.pd3 <- subset(acdf.log[2:8], Period==3)[2:7]
+
+pca.pd1 <- prcomp(acdf.pd1)
+pca.pd2 <- prcomp(acdf.pd2)
+pca.pd3 <- prcomp(acdf.pd3)
+```
+
+### (b) Show eigenvalue plots for each period. Interpret the results.
+
+```{r}
+pca.pd1.eig <- data.frame(PC=paste0("PC", 1:6), 
+                          eigenvalue=pca.pd1$sdev^2)
+pca.pd2.eig <- data.frame(PC=paste0("PC", 1:6), 
+                          eigenvalue=pca.pd2$sdev^2)
+pca.pd3.eig <- data.frame(PC=paste0("PC", 1:6), 
+                          eigenvalue=pca.pd3$sdev^2)
+```
+
+```{r scree, fig.width=16, fig.height=4, fig.cap="\\label{fig:scree}Scree plots for the 3 periods"}
+plt.b1 <- ggplot(pca.pd1.eig, aes(x=PC, y=eigenvalue, group=1)) +
+  geom_point(size=3) +
+  geom_line() +
+  labs(title="Period 1 scree plot")
+
+plt.b2 <- ggplot(pca.pd2.eig, aes(x=PC, y=eigenvalue, group=1)) +
+  geom_point(size=3) +
+  geom_line() +
+  labs(title="Period 2 scree plot")
+
+plt.b3 <- ggplot(pca.pd3.eig, aes(x=PC, y=eigenvalue, group=1)) +
+  geom_point(size=3) +
+  geom_line() +
+  labs(title="Period 3 scree plot")
+
+print(plt.b1 + plt.b2 + plt.b3)
+```
+
+Clearly shown in Figure \ref{fig:scree}, the first PC in each period is very influential, and alone it may enough to explain the data. However, to be safe it'd be best to use the first two PCs to describe the data.
+
+Interestingly, the eigenvalues are larger in period 3 than in the other periods, but this fact doesn't matter much.
+
+### (c) Show score plots of the first two PCs for each period. Comment on the results.
+
+PC scores can be calculated as follows
+\begin{equation}
+\vec{W}^{(\kappa)} = \vec{\Gamma}_{\kappa}^{\mathrm{T}} \vec{X}_{\mathrm{cent}} 
+    = \vec{\Gamma}_{\kappa}^{\mathrm{T}} (\vec{X} - \vec{\mu})
+\end{equation}
+
+
+Where $\vec{W}^{(\kappa)}$ is the $\kappa$-dimensional vector of PC scores, $\vec{\Gamma}_{\kappa}^{\mathrm{T}}$ Is the vector of eigenvectors, and $\vec{X}_{\mathrm{cent}}$ are the centered random variables.
+
+```{r}
+w.k.pd1 <- data.frame(pca.pd1$x)
+w.k.pd2 <- data.frame(pca.pd2$x)
+w.k.pd3 <- data.frame(pca.pd3$x)
+```
+
+Now to plot the first score vs. second score plot:
+
+```{r score, fig.width=16, fig.height=4, fig.cap="\\label{fig:score}Score plots of the three periods"}
+score.plt1 <- ggplot(w.k.pd1[,1:2], aes(x=PC1, y=PC2)) +
+  geom_point() +
+  labs(x="PC1 Scores", y="PC2 Scores", title="Period 1 scores")
+
+score.plt2 <- ggplot(w.k.pd2[,1:2], aes(x=PC1, y=PC2)) +
+  geom_point() +
+  labs(x="PC1 Scores", y="PC2 Scores", title="Period 2 scores")
+
+score.plt3 <- ggplot(w.k.pd3[,1:2], aes(x=PC1, y=PC2)) +
+  geom_point() +
+  labs(x="PC1 Scores", y="PC2 Scores", title="Period 3 scores")
+
+print(score.plt1 + score.plt2 + score.plt3)
+```
+
+### (d) Which logged variable contributes most to PC1 for each period? Does this change across the three periods? Comment on the results.
+
+If we have a look at the vector components in the first PC in each period, we see that the greatest contribution to PC1 comes from the `logWeight` variable (very closely followed by `logPower`), with a vector component of $\approx 0.617$. In period 2, the `logPower` has the greatest contribution with value $\approx -0.630$. In period 3 `logPower` is again the strongest influence with value $\approx -0.704$.
+
+This means that in period 1, PC1 scores that are positive for an arbitrary observation will have greater values for `logWeight`. This is similar for period 2 and 3, except that negative PC1 scores will show greater values for `logPower`. 
+
+### (e) Based on your analysis, discuss the main changes that have occurred over time.
+
+Over time, it seems like the range of different sizes and power consumptions of aircraft has increased, allowing for much larger/more powerful planes. On average, planes got larger and more powerful from period 1 to 3.
+
+As shown by the second contour plot in Figure \ref{fig:contour}, planes in the later periods were capable of a higher speed at the same length, and greater lengths at similar speeds. This means that more advanced planes allowed more efficient conversion of power to speed.
+
+
+## Question 4
+
+### (a) Read the data into R. What is the dimension of the covariance matrix $\Sigma_1$?
+
+```{r}
+popdf    <- read.csv("./ass2pop.csv", header=FALSE)
+pop.mu1  <- popdf[,1]
+pop.mu2  <- popdf[,2]
+pop.sig1 <- popdf[,3:22]
+pop.sig2 <- popdf[,23:NCOL(popdf)]
+```
+
+Both covariance matrices are of dimension 20x20.
+
+### (b) Generate 250 samples from the distribution $N(\mu_1, \Sigma_1)$ and from $N(\mu_2, \Sigma_2)$. Calculate the sample covariance matrix S of the 500 samples and find its eigenvalues. Save this matrix into a file for later analysis.
+
+```{r}
+set.seed(114)
+samp1 <- mvrnorm(n=250, mu=pop.mu1, Sigma=pop.sig1)
+samp2 <- mvrnorm(n=250, mu=pop.mu2, Sigma=pop.sig2)
+
+samp <- cbind(samp1, samp2)
+
+samp.cov <- cov(samp)
+samp.eig <- eigen(samp.cov)
+
+write.csv(samp.eig$values, "./pop_eig1.csv")
+```
+
+The code used here generates a set of 250 samples each from $N(\mu_1, \Sigma_1)$ and $N(\mu_2, \Sigma_2)$. Finds the covariance matrix of these samples together, calculates the eigenvalues and saves them to `pop_eig1.csv` locally.
+
+### (c) Repeat part b another 49 times, for a total of 50 eigenvalue vectors
+
+```{r}
+nreps <- 49
+
+res <- matrix(nrow=40, ncol=nreps)
+
+set.seed(114)
+for (i in 1:nreps) {
+  samp1 <- mvrnorm(n=250, mu=pop.mu1, Sigma=pop.sig1)
+  samp2 <- mvrnorm(n=250, mu=pop.mu2, Sigma=pop.sig2)
+  
+  samp <- cbind(samp1, samp2)
+  
+  samp.cov <- cov(samp)
+  samp.eig <- eigen(samp.cov)
+  
+  res[,i] <- samp.eig$values
+}
+
+res <- data.frame(res)
+
+colnames(res) <- paste0("rep_", 1:nreps+1)
+
+write.csv(res, "./pop_eig2-50.csv")
+```
+
+The code here acts in the same way as in part (b), except within a for loop, such that it runs 49 times. It takes 250 samples from each distribution, merges them, finds the covariance of this set, calculates the covariance matrix and its eigenvalues, and saves these locally to `pop_eig2-50.csv`
+
+### (d) Calculate the mean vector of eigenvalues over the 50 repetitions and list/print this mean vector.
+
+```{r}
+pop.eig1 <- read.csv("./pop_eig1.csv")[,-1]
+pop.eig2 <- read.csv("./pop_eig2-50.csv")[,-1]
+
+pop.eig <- cbind(pop.eig1, pop.eig2)
+colnames(pop.eig)[1] <- "rep_1"
+
+pop.eig.means <- rowMeans(pop.eig)
+print(pop.eig.means)
+```
+
+Each of the 40 numbers in the above vector is the mean value of each of the 40 eigenvectors, taken over all 50 repetitions.
+
+### (e) Display the 50 vectors of eigenvalues and their mean vector in a scree plot.
+
+```{r scree2, fig.cap="\\label{fig:scree2}Scree plot of the normal samples"}
+plt.4d1 <- ggplot(melt(t(pop.eig)), aes(x=Var2, y=value, group=1)) +
+  geom_point(size=1, alpha=0.1, position=position_jitter(width=0.1)) +
+  stat_summary(fun=mean, geom="point", colour="red", pch=19, size=1.5) +
+  stat_summary(fun=mean, geom="line", colour="red") +
+  labs(x="PC", y="eigenvalue", title="Scree plot of samples taken from normal distribution") +
+  ylim(0, 12)
+
+print(plt.4d1)
+```
+
+### (f) Repeat parts b to e with 250 samples from the *t*-distribution $t_{10}(\mu_1, \Sigma_{01})$ and 250 samples from $t_{4}(\mu_2, \Sigma_{02})$.
+
+For this question I will include some R output so as to demonstrate the steps taken.
+
+$\Sigma_{0k}$ is defined in the formula as a scale matrix:
+
+\[\makebox[\linewidth]{$\displaystyle
+  \begin{aligned}
+    \Sigma_k    &= \frac{\nu}{\nu-2} \Sigma_{0k} \\
+    \Sigma_{0k} &= \frac{\nu-2}{\nu} \Sigma_k
+  \end{aligned}$
+}\]
+
+Where $\nu$ is the degrees of freedom of the *t*-distribution, and $k=1$ and $2$ for this part.
+
+First we calculate the scale matrices:
+
+\[\makebox[\linewidth]{$\displaystyle
+  \begin{aligned}
+    \Sigma_{01} &= \frac{\nu-2}{\nu} \Sigma_1 = \frac{8}{10} \Sigma_1 \\
+    \Sigma_{02} &= \frac{\nu-2}{\nu} \Sigma_2 = \frac{2}{4} \Sigma_2
+  \end{aligned}$
+}\]
+
+```{r}
+pop.sig01 <- (8/10) * pop.sig1
+pop.sig02 <- (2/4) * pop.sig2
+```
+
+Now we take 250 samples from the *t*-distribution, 50 times and print the 40 eigenvalue means:
+
+```{r}
+pop.sig01.sym <- data.matrix(unname(0.5 * (pop.sig01 + t(pop.sig01))))
+pop.sig02.sym <- data.matrix(unname(0.5 * (pop.sig02 + t(pop.sig02))))
+
+nreps <- 50
+
+res <- matrix(nrow=40, ncol=nreps)
+
+set.seed(114)
+for (i in 1:nreps) {
+  samp1 <- rmvt(n=250, sigma=pop.sig01.sym, df=10)
+  samp2 <- rmvt(n=250, sigma=pop.sig02.sym, df=4)
+  
+  samp <- cbind(samp1, samp2)
+  
+  samp.cov <- cov(samp)
+  samp.eig <- eigen(samp.cov)
+  
+  res[,i] <- samp.eig$values
+}
+
+res <- data.frame(res)
+
+colnames(res) <- paste0("rep_", 1:nreps)
+
+write.csv(res, "./pop_t_eig.csv")
+```
+
+```{r}
+pop.t.eig <- read.csv("./pop_t_eig.csv")[,-1]
+
+pop.t.eig.means <- rowMeans(pop.t.eig)
+
+print(pop.t.eig.means)
+```
+
+And finally, make the scree plot:
+
+```{r scree3, fig.cap="\\label{fig:scree3}Scree plot"}
+plt.4d2 <- ggplot(melt(t(pop.t.eig)), aes(x=Var2, y=value, group=1)) +
+  geom_point(size=1, alpha=0.1, position=position_jitter(width=0.1)) +
+  stat_summary(fun=mean, geom="point", colour="red", pch=19, size=1.5) +
+  stat_summary(fun=mean, geom="line", colour="red") +
+  labs(x="PC", y="eigenvalue", title="Scree plot of samples from t-distribution") +
+  ylim(0, 12)
+
+print(plt.4d2)
+```
+
+### (g) Compare the results of the two different simulations and comment on interesting findings and differences between them.
+
+Displaying both scree plots side by side:
+
+```{r scree4, fig.width=12, fig.height=4, fig.cap="\\label{fig:scree4}Side by side comparison of figures \\ref{fig:scree2} and \\ref{fig:scree3}"}
+print(plt.4d1 + plt.4d2)
+```
+
+Figure \ref{fig:scree4} shows that for both scree plots, the first 3 principal components are enough to describe the simulated data. Just by viewing these plots, it appears as though both the normal distribution and the student's *t*-distribution are similar in their representation of the given populations. The *t*-distribution has a wider distribution of points for each PC, as expected since the student's *t*-distribution is very reminiscient of a normal distribution, just slightly flattened and with heavier tails.
+

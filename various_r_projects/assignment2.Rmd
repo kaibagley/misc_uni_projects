@@ -1,0 +1,450 @@
+---
+title: "Assignment 2"
+output: html_notebook
+---
+
+Kai Bagley - 21984315
+
+## Task 1
+
+Given data on the height of a human ($y_i$) at time points ($t_i$), $i=1, ..., n$, with $t_1 \lt t_2 \lt ... \lt t_n$, a humans growth model, proposed by Preece and Baines, is given by:
+
+```{=tex}
+\begin{eqnarray}
+
+Y_i | \mu_i, \sigma^2 &\sim& N(\mu_i, \sigma^2) &i&=1, ..., n \\
+
+\mu_i &=& h_1 - \frac{4(h_1 - h_\theta)}{\exp(p_0(t_i - \theta))\{1 + \exp(q_1(t_i-\theta))\} \{1 + \exp(q_2(t_i-\theta))\}} &&
+
+\tag{1}
+\end{eqnarray}
+```
+
+This model has 7 parameters:
+
+* The height $h_1$, which is the final adult height of the individual. (i.e. the person's height when $t$ is large)
+
+* The time point $\theta$, and the expected height $h_\theta$ at that time point. We expect $0 \lt h_\theta \lt h_1$ or $0 \le \theta \lt t_n$.
+
+* Three rate parameters $p_0$, $q_1$ and $q_2$, which are all positive. Note, $q_1$ and $q_2$ are indistinguishable (i.e. $(q_1, q_2) = (0.4, 0.8)$ gives the same fit as $(q_1, q_2) = (0.8, 0.4)$). To make the identifiable it is natural to impose constraints of the form $0 \lt q_1 \lt q_2$.
+
+* The error variability $\sigma^2$
+
+The file `Child.csv` contains growth data of a boy from age 1 to 18 years. Fit the Preece-Baines growth model to this data usign suitable non-informative priors.
+Report in a concise and readable fashion, for each paramater the estimated posterior mean (Bayesian Estimate), the estimated posterior standard defiation and 95% credible intervals. Clearly report what priors were chosen for each parameter.
+
+#### Load libraries and prepare notebook environment
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      tidy=TRUE)
+```
+
+```{r, results='hide'}
+library("rstan")
+library("bayesplot")
+```
+
+```{r}
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+#### Load data
+
+```{r}
+dat <- read.csv("./Child.csv")
+```
+
+#### Visualisation
+
+```{r}
+plot(dat)
+```
+
+#### Preece-Baines Growth model in Stan
+
+```{stan, output.var="PBmodel"}
+
+data {
+  int<lower=0> n;
+  vector[n] y;
+  vector[n] t; 
+}
+
+parameters {
+  positive_ordered[2] q;
+  real<lower=0> h1;
+  real<lower=0> p0;
+  real<lower=0, upper=max(t)> theta;
+  real<lower=0, upper=h1> h_theta;
+  real<lower=0> sigma;
+}
+
+transformed parameters {
+  real<lower=0> q1;
+  real<lower=0> q2;
+  vector[n] mu;
+  real sigma2;
+  
+  q1 = q[1];
+  q2 = q[2];
+  sigma2 = sigma^2;
+
+  for (i in 1:n) {
+    mu[i] = h1 - ( 4*(h1-h_theta) / (exp(p0*(t[i]-theta))*(1+exp(q1*(t[i]-theta)))*(1+exp(q2*(t[i]-theta)))) );
+  }
+}
+
+model {
+  h1 ~ normal(180, 20);         // Uninformative, actual human height range
+  h_theta ~ normal(max(y), 20); // H_theta represents height at growth spurt (Discovered via a lot of googling)
+  theta ~ normal(max(t), 2);    // Theta represents time of growth spurt (Discovered via a lot of googling)
+  q ~ normal(0, 50);            // Light regularisation on shape params
+  p0 ~ normal(0, 50);           // "
+    
+  y ~ normal(mu, sigma);        // Likelihood
+}
+
+```
+
+```{r}
+data.in     <- list(n=nrow(dat), y=dat$Height, t=dat$Age)
+PBmodel.fit <- sampling(PBmodel, data=data.in)
+```
+
+```{r}
+check_hmc_diagnostics(PBmodel.fit)
+```
+
+```{r}
+posterior <- as.array(PBmodel.fit)
+mcmc_trace(posterior, pars=c("h1", "theta", "h_theta", "p0", "q1", "q2"))
+```
+
+```{r}
+print(PBmodel.fit, digits=3, probs=c(0.025, 0.5, 0.975), pars=c("sigma2", "h1", "h_theta", "theta", "p0", "q1", "q2"))
+```
+
+We can see above in the trace plots that the chains converge well, and the print statement give us the posterior means:
+
+* `sigma2`  -> 0.295
+* `h1`      -> 189
+* `h_theta` -> 179
+* `theta`   -> 15.6
+* `p0`      -> 0.075
+* `q1`      -> 0.276
+* `q2`      -> 1.17
+
+And the estimated posterior standard deviations:
+
+* `sigma`   -> 0.090
+* `h1`      -> 0.362
+* `h_theta` -> 0.756
+* `theta`   -> 0.114
+* `p0`      -> 0.004
+* `q1`      -> 0.045
+* `q2`      -> 0.092
+
+And the 95% CIs:
+
+* `sigma`   -> [0.167, 0.509]
+* `h1`      -> [188, 190]
+* `h_theta` -> [177, 180]
+* `theta`   -> [14.3, 14.8]
+* `p0`      -> [0.068, 0.083]
+* `q1`      -> [0.198, 0.370]
+* `q2`      -> [1.11, 1.38]
+
+We can plot the CI for the regression curve too:
+```{r}
+x <- dat$Age
+y <- dat$Height
+posterior <- as.matrix(PBmodel.fit)
+
+fit <- lapply(extract(PBmodel.fit, c("h1", "h_theta", "theta", "p0", "q1", "q2")), mean)
+xgr <- seq(from=min(x), to=max(x), length=301)
+
+fitline <- fit$h1 - ( 4*(fit$h1-fit$h_theta) / (exp(fit$p0*(xgr-fit$theta))*(1+exp(fit$q1*(xgr-fit$theta)))*(1+exp(fit$q2*(xgr-fit$theta)))) )
+
+mu.mat <- matrix(0, nrow = 4000, ncol = length(xgr))
+for (i in 1:4000) {
+  mu.mat[i, ] <- posterior[i, "h1"] - ( 4*(posterior[i, "h1"]-posterior[i, "h_theta"]) / (exp(posterior[i, "p0"]*(xgr-posterior[i, "theta"]))*(1+exp(posterior[i, "q1"]*(xgr-posterior[i, "theta"])))*(1+exp(posterior[i, "q2"]*(xgr-posterior[i, "theta"])))) )
+}
+
+CrInt <- apply(mu.mat, 2, function(x) quantile(x, c(0.025, 0.975)))
+plot(x, y)
+polygon(c(xgr, rev(xgr)), c(CrInt[1, ], rev(CrInt[2, ])), col = "darkgrey")
+lines(xgr, fitline)
+points(x, y)
+```
+CI looks pretty good, barely distinguishable from the fit itself
+
+## Task 2
+
+`Survival.csv` contains the survival times (`time`) of rats as a function of concentrations of a contaminant (`conc`). Consider the model:
+
+```{=tex}
+\begin{eqnarray}
+
+\text{time}_i | \lambda_i &\sim& \text{Exp}(\lambda_i) &i& = 1, ..., n \\
+
+\text{log}(\lambda_i) &=& -\beta_0 - \beta_1 \text{conc}_i &&
+
+\tag{2}
+\end{eqnarray}
+```
+
+Where $\text{Exp}(\lambda)$ is the exponential distribution with rate parameter $\lambda$. It is a continuous distribution with density function:
+
+```{=tex}
+\begin{equation}
+
+f(y|\lambda) =
+\begin{cases}
+\lambda \text{e}^{-\lambda y} & \text{if } y \ge 0 \\
+0                             & \text{if } y \lt 0
+\end{cases}
+
+\tag{3}
+\end{equation}
+```
+
+Tasks:
+a. Implement the above model in Stan using non-informative priors on $\beta_0$ and $\beta_1$
+
+b. Suppose an expert starts out 90% sure that the expected survival time in the absence of the contaminant is less than 40, and 90% sure that it is greater than 10. They also believe that for every additional unit of contaminant concentration, survival time decreases by about 40%, and is 95% sure that it is by no more than 60%.
+This prior info could be translated into the following priors:
+
+```{=tex}
+\begin{eqnarray}
+
+\beta_0 &\sim& N(3, 0.54^2) \\
+\beta_1 &\sim& N(-0.51, 0.25^2)
+
+\tag{4}
+\end{eqnarray}
+```
+
+c. Report, for each model, the estimated posterior means of regression parameters, estimated posterior standard deviations, and 95% credible interevals for $\beta_0$ and $\beta_1$. Comment on substantial differences in the results due to the use of non-informative priors in the first model, and informative in the second. Also explain how the expert's prior knowledge is encoded in the given priors in equation (4).
+
+#### Load data
+
+```{r}
+dat2 <- read.csv("./Survival.csv")
+```
+
+#### Visualisation
+
+```{r}
+plot(dat2)
+```
+
+### Part (a)
+
+#### Model
+
+```{stan, output.var="ratmodel"}
+
+data {
+  int<lower=0> n;
+  vector[n] time;
+  vector[n] conc;
+}
+
+parameters {
+  real beta0;
+  real beta1;
+}
+
+transformed parameters {
+  vector[n] log_lambda;
+  vector[n] lambda;
+  
+  for (i in 1:n) {
+    log_lambda[i] = -beta0 - (beta1 * conc[i]); // Link function
+  }
+  lambda = exp(log_lambda);
+}
+
+model {
+  // Likelihood
+  time ~ exponential(lambda);
+  
+  // Flat priors
+}
+
+```
+
+```{r}
+data.in2     <- list(n=nrow(dat2), time=dat2$time, conc=dat2$conc)
+ratmodel.fit <- sampling(ratmodel, data=data.in2)
+```
+
+```{r}
+check_hmc_diagnostics(ratmodel.fit)
+```
+
+```{r}
+print(ratmodel.fit, digits=5, pars=c("beta0", "beta1"), probs=c(0.025, 0.975))
+```
+
+```{r}
+posterior2 <- as.array(ratmodel.fit)
+mcmc_trace(posterior2, pars=c("beta0", "beta1"))
+```
+
+### Part (b)
+
+#### Stan model with given priors
+
+```{stan, output.var="ratmodel2"}
+
+data {
+  int<lower=0> n;
+  vector[n] time;
+  vector[n] conc;
+}
+
+parameters {
+  real beta0;
+  real beta1;
+}
+
+transformed parameters {
+  vector[n] log_lambda;
+  vector[n] lambda;
+  
+  for (i in 1:n) {
+    log_lambda[i] = -beta0 - (beta1 * conc[i]); // Link function
+  }
+  lambda = exp(log_lambda);
+}
+
+model {
+  // Likelihood
+  time ~ exponential(lambda);
+  
+  // Priors
+  beta0 ~ normal(3, 0.54);
+  beta1 ~ normal(-0.51, 0.25);
+}
+
+```
+
+```{r}
+ratmodel2.fit <- sampling(ratmodel2, data=data.in2)
+```
+
+```{r}
+check_hmc_diagnostics(ratmodel2.fit)
+```
+
+```{r}
+print(ratmodel2.fit, digits=5, pars=c("beta0", "beta1"), probs=c(0.025, 0.975))
+```
+
+```{r}
+posterior3 <- as.array(ratmodel2.fit)
+mcmc_trace(posterior3, pars=c("beta0", "beta1"))
+```
+
+#### Part (c)
+Discuss part (a) and (b). All values for the Bayes estimates are found from the above print statements in each part.
+
+##### Model (a) estimates
+
+Estimated posterior means:
+
+* `beta0` -> 2.96
+* `beta1` -> -0.313
+
+Estimated posterior standard deviations:
+
+* `beta0` -> 0.639
+* `beta1` -> 0.0959
+
+95% credible intervals:
+
+* `beta0` -> [1.88, 4.37]
+* `beta1` -> [-0.516, -0.136]
+
+##### Model (b) estimates
+
+Estimated posterior means:
+
+* `beta0` -> 3.02
+* `beta1` -> -0.327
+
+Estimated posterior standard deviations:
+
+* `beta0` -> 0.414
+* `beta1` -> 0.0666
+
+95% credible intervals:
+
+* `beta0` -> [2.25, 3.88]
+* `beta1` -> [-0.460, -0.200]
+
+##### (a) vs. (b)
+
+The standard deviations are lower/CIs thinner in model (b), which makes sense since we have prior knowledge of the situation from someone who actually knows that they're talking about. We can show this in some plots:
+
+`beta0`:
+```{r}
+mcmc_areas(posterior2, pars=c("beta0"), prob=0.95, point_est="mean")
+mcmc_areas(posterior3, pars=c("beta0"), prob=0.95, point_est="mean")
+```
+
+`beta1`:
+```{r}
+mcmc_areas(posterior2, pars=c("beta1"), prob=0.95, point_est="mean")
+mcmc_areas(posterior3, pars=c("beta1"), prob=0.95, point_est="mean")
+```
+
+In the above plots we can also see some skewing, to the right for `beta0`, and to the left for `beta1`, only in model (a). This makes model (b) more believable than (a), since (b) shows a very clean normal distribution for the parameter estimates.
+
+The way that the expert's prior knowledge is encoded in the given distributions is as follows:
+
+We know that the linking function is $\log(\lambda_i) = -\beta_0 - \beta_1 \text{conc}_i$, and using the given info in the footer of the assignment description we know that this is equivalent to $\log(\mu_i) = \beta_0 + \beta_1 \text{conc}_i$. Therefore, at $\text{conc} = 0$, $\log{\mu} = \beta_0$. We can get an estimate of $\mu$ by taking the exponential of $\beta_0$ when $\text{conc} = 0$.
+
+To get the estimates for the parameters, we calculate $\log(10) \approx = 2.3 $ and $\log(40) \approx 3.68$. We can average these values to get the mean of $3$. Now we can find out how many standard distributions away from the mean the CIs are, using qnorm for a standard normal, and checking how many standard deviations away the upper 80% CI is from the mean. This is where the z-score of $1.281552$ below comes from. We then divide the distance from the mean to one of the CIs by this number to get the standard deviation of the distribution given by the expert (0.54).
+
+```{r}
+
+lo <- log(10)
+up <- log(40)
+n  <- nrow(dat2)
+
+ci <- c(lo, up)
+
+x_bar <- mean(ci)
+
+# Calc to find z-score for 80% CI
+zs <- qnorm(0.9) # Gives distance from mean of 0, since its std norm it is number of sd from mean
+
+sd <- (x_bar - ci[1]) / zs
+sd
+```
+
+We know that `beta0` is the intercept of the GLM, and that `beta1` is the gradient of the curve. When $\text{conc} = 0$ it is easy to find `beta0` as the linear equation becomes $\log(\mu) = \beta_0$. However for `beta1`, we can't just erase the `beta0`, so we have to think about `beta1` as the parameter for the x variable (`conc`). In an equation that has the y-variable logged ($log(\mu) = \beta_0 + \beta_1 \text{conc}$ / Log link function), $exp(\beta_1)$ is the amount $\mu$ is multiplied by for a one-unit change in `conc`. Therefore if we take the log of the expert's estimate of the mean (assuming it's the mean due to wording of "decreases by about 40%"), we should get the mean value of `beta1` used in the given prior:
+
+```{r}
+# 1 - 0.4 = 0.6, 40% decrease is same as 60% of original value
+x_bar <- log(1-0.4)
+x_bar
+```
+
+And to find the standard deviation, we do the same as above on the expert's upper 90% CI of 60%, and then find how many standard deviations from the mean it is.
+
+```{r}
+up <- log(1-0.6)
+
+# Find z-score for 90% CI
+zs <- qnorm(0.95)
+
+sd <- abs(up - x_bar) / zs
+sd
+```
+
+This is the value for standard deviation used in the given prior dist, rounded up to 0.25.

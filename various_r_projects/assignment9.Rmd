@@ -1,0 +1,481 @@
+---
+title: "Assignment 3"
+author: "Kai Bagley - 21984315"
+date: "17/05/2022"
+output:
+  pdf_document:
+    fig_caption: yes
+fig_width: 8
+fig_height: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      tidy = TRUE)
+```
+
+```{r, results='hide'}
+library("ggplot2")
+library("patchwork")
+library("MASS")
+library("glmnet")
+library("nnet")
+library("ISLR2")
+library("tidyverse")
+library("magrittr")
+library("splines")
+```
+
+## Question 1
+
+Consider the Auto data from ISLR2 and delete observations with missing values. Then select the subset of cars with `Year >= 76`. Call this subset `Auto76`.
+
+```{r}
+Auto76 <- Auto %>% 
+  drop_na() %>% 
+  filter(year >= 76)
+```
+
+
+### (a) Use the variable `mpg` as repsonse variable and `horsepower` as predictor variable. Show a scatterplot of these variables of the `Auto76` data.
+
+```{r}
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point()
+```
+
+### (b) Fit a linear model to the pairs of observations (`horsepower`, `mpg`). Show the fitted line on the scatterplot, and give the equation of the line and the MSE. Does the line fit the data well?
+
+```{r}
+fit1 <- lm(mpg ~ horsepower, data = Auto76)
+summary(fit1)
+
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point() +
+  stat_smooth(method = "lm", se = F)
+```
+
+For the linear model, the equation is:
+
+\[
+\makebox[\linewidth]{$\displaystyle
+  \begin{aligned}
+    \hat{y}_i = \: &\hat{\beta}_0 + \hat{\beta}_1 x_i + \hat{\varepsilon}_i \\
+    &46.7 - 0.214 x_i + \hat{\varepsilon}_i \\
+    &\text{where} \; \varepsilon \sim \mathcal{N}(0,\; 4.68^2)
+  \end{aligned}$
+}
+\]
+
+```{r}
+cat("MSE: ", mean(fit1$residuals^2), "\n")
+cat("RSS: ", sum(fit1$residuals^2))
+```
+
+The line doesn't fit the data well, the MSE is reasonably low, but the variance is around 4.68, (standard dev. $\approx 21.9$) which is quite high. 
+
+### (c) Now we explore estimating `mpg` from `horsepower` using polynomials. Explore polynomials of degree 2, 3, 4 and 5. Show your results in an ANOVA table and interpret the result. Generate a grid $G = {4, 8, ..., 192}$ for `horsepower`. How many points does this grid have? Predict the estimates for `mpg` and the grid points and show your results graphically. Interpret your results and comment on which degree polynomial fits best. Give a reason for your choice.
+
+```{r}
+fit2 <- lm(mpg ~ poly(horsepower, 2), data = Auto76)
+fit3 <- lm(mpg ~ poly(horsepower, 3), data = Auto76)
+fit4 <- lm(mpg ~ poly(horsepower, 4), data = Auto76)
+fit5 <- lm(mpg ~ poly(horsepower, 5), data = Auto76)
+
+anova(fit1, fit2, fit3, fit4, fit5)
+```
+
+The anova output above shows that there is only a significant effect on `mpg` by `horsepower` at polynomial degree 2, and that the model is significantly better than the linear model in part (b).
+
+```{r}
+G <- seq.int(4, 192, 4)
+G <- data.frame(horsepower = G)
+G %>% length
+```
+
+The grid has 48 elements
+
+```{r}
+pred2 <- predict(fit2, newdata = G)
+
+cbind(pred2, G) %>% 
+  set_colnames(c("mpg_pred", "hpow")) %>% 
+  ggplot(aes(y = mpg_pred, x = hpow)) +
+  geom_point(data = Auto76, 
+             mapping = aes(y = mpg, x = horsepower)) +
+  geom_line(colour = "dodgerblue", size = 1.5)
+```
+
+Above is shown a plot of the fitted values (shown in black) and the actual values (in blue) of the `mpg` vs `horsepower`. Clearly the fit is quite good, running straight through the centre and following the curve of the data nicely. 
+
+```{r}
+cat("MSE: ", mean(fit2$residuals^2), "\n")
+cat("RSS: ", sum(fit2$residuals^2), "\n")
+```
+
+Above are the MSE and the RSS, both of which are lower than for the linear fit (around 21.7 and 4603 respectively). Also, the ANOVA in (b) suggests that we reject the null hypothesis of the linear fit being better than the quadratic fit. This tells me that the quadratic model is the best we have for the data so far.
+
+
+## Question 2
+
+Consider the `Auto76` data from Q1 and the variables `mpg` and `horsepower`. Use the `horsepower` grid *G* created in Q1 to compare the results of this question.
+
+### (a) Fit regression splines to estimate `mpg` using the spline bases functions with `bs()` and knots at `horsepower` values of 60, 90, 116, 140 and 164. Show the results graphically.
+
+```{r}
+fit_bs <- lm(mpg ~ bs(horsepower, knots = c(60, 92, 116, 140, 164)), data = Auto76)
+
+fit_bs_pred <- predict(fit_bs, newdata = G)
+
+pred_data <- data.frame(grid = G, pred = fit_bs_pred)
+
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point(alpha = 1) +
+  geom_line(data = pred_data, 
+            aes(y = pred, x = horsepower),
+            size = 1.5, colour = "dodgerblue") +
+  xlim(min(Auto76$horsepower), max(Auto76$horsepower)) +
+  ylim(min(Auto76$mpg), max(Auto76$mpg))
+  
+```
+
+### (b) For regressions splines with `bs()` fit splines of degrees 2 and 3 at the same two sets of knots as in part (a). How do the results change? Which fit is best? Compare the resulting spline fits calculated in this question and comment on your results.
+
+```{r}
+fit_bs1 <- lm(mpg ~ bs(horsepower, 
+                      degree = 2,
+                      knots = c(60, 92, 116, 140, 164)),
+             data = Auto76)
+
+fit_bs2 <- lm(mpg ~ bs(horsepower, 
+                      degree = 3,
+                      knots = c(60, 92, 116, 140, 164)),
+             data = Auto76)
+
+fit_bs_pred1 <- predict(fit_bs1, newdata = G)
+fit_bs_pred2 <- predict(fit_bs2, newdata = G)
+
+pred_data1 <- 
+  data.frame(grid = G, 
+             pred1 = fit_bs_pred1, 
+             pred2 = fit_bs_pred2) %>% 
+  pivot_longer(cols = c("pred2", "pred1"),
+               names_to = "degree",
+               values_to = "preds")
+
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point(alpha = 1) +
+  geom_line(data = pred_data1, 
+            aes(y = preds, x = horsepower, colour = degree),
+            size = 1) +
+  scale_color_manual(values = c("dodgerblue", 
+                                "brown2")) +
+  xlim(min(Auto76$horsepower) - 60, max(Auto76$horsepower)) +
+  ylim(min(Auto76$mpg), max(Auto76$mpg) + 60)
+```
+
+Not too much has changed other that the `degree = 2` spline looks smoother. The default for splines is `degree = 3` so the blue line should be the same as that in (a)
+
+```{r}
+anova(fit_bs1, fit_bs2)
+```
+
+According to the above ANOVA, model 2 (`degree = 3`) is significantly better (*p* < 0.05), but judging by the above plot, it shows signs of overfitting with all the waviness. Also, neither of them extrapolate well at all. However, the model is unlikely to see cars with horsepower outside of the domain it is trained on, and if it does it will 100% need to be trained again. 
+
+The over-fitting waviness effect could be mitigated if *n*-fold cross-validation were run on it.
+
+```{r}
+cat("MSE deg = 2: ", mean(fit_bs1$residuals^2), "\n")
+cat("MSE deg = 3: ", mean(fit_bs2$residuals^2))
+```
+
+Above is shown the MSE for both models,`degree = 2` first. They are marginally different. 
+
+The first model looks much nicer, being smoother and has a much less hard curve for extrapolating below the domain of the data. 
+
+For the above reasons, I will say that the `degree = 2` model is a better choice for the data.
+
+
+## Question 3
+
+Consider Question 1 `Auto76` data and the variables `mgp` and `horsepower`. Use the `horsepower` grid *G* created in Q1 and compare the results of this question.
+
+### (a) Fit smoothing splines to estimate `mpg` using the `smooth.spline()` function. Explore df-values {4, 6, ..., 32}. Show the results graphically and comment on the results. Which of the above df-values fits the data best, based on visual inspection of the results?
+
+```{r}
+fits_ss <- 
+  lapply(seq.int(4, 32, 2), 
+         function(x) smooth.spline(Auto76$horsepower, Auto76$mpg, df = x))
+
+preds_ss <- lapply(fits_ss, function(fit) predict(fit, x = seq.int(4, 192, 4)))
+
+preds <- 
+  preds_ss %>% 
+  as.data.frame() %>% 
+  pivot_longer(cols = matches("y"),
+               names_to = "df",
+               values_to = "pred") %>% 
+  select(c(x, df, pred))
+
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point() +
+  geom_line(data = preds, 
+            aes(y = pred, x = x, colour = df),
+            size = 0.75) +
+  xlim(45, 200) +
+  ylim(10, 50)
+```
+
+To get the `df` of a given line, take the number next to the corresponding "y" in the legend, multiply it 2 and add 4.
+
+The higher `df` splines are definitely over-fitting, and are unnecessary, so lets have a closer look at the lower `df` splines.
+
+```{r}
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point() +
+  geom_line(data = preds %>% filter(df %in% c("y", paste0("y.", 1:3))), 
+            aes(y = pred, x = x, colour = df),
+            size = 0.75) +
+  xlim(45, 200) +
+  ylim(10, 50)
+```
+
+All of the lower order splines are very similar, but again it is not necessary for them to have so many knots/degrees. The "y"/`df = 4` one is likely the best, as it is the smoothest, and it looks like it'll extrapolate better, as higher horsepower is likely going to lead to lower mpg.
+
+### (b) To find the 'best' df-value, we use cross-validation. Plot the fitted function and compare your optimal df-value with those in part (a).
+
+```{r}
+fit_ss2 <- smooth.spline(Auto76$horsepower, Auto76$mpg, cv = T)
+fit_ss2
+```
+
+"Optimal" $\text{df} \approx 4$.
+
+```{r}
+ggplot() +
+  geom_point(data = Auto76, mapping = aes(x = horsepower, y = mpg)) +
+  geom_line(data = data.frame(x = fit_ss2$x, y = fit_ss2$y), 
+            mapping = aes(x = x, y = y), 
+            colour = "dodgerblue", size = 1.5) +
+  geom_line(data = preds %>% filter(df == "y"), 
+            mapping = aes(x = x, y = pred), 
+            colour = "brown2", size = 1.5)
+```
+
+Where the blue line is the "optimal" `df` and the red is the `df = 4` line from part (a).
+
+It is difficult to discern by eye which is better, likely due to the fact that they are almost exactly the same. At this point, for simplicity I will choose the spline with `df = 4` as it is an integer.
+
+### (c) Perform local regression with kernel estimators using the Gaussian kernel with different bandwidth parameters. Try bandwidth parameters {0.5, 1, 2, 4, 8, 16}. Describe the behaviour of the fit as the bandwidth increases.
+
+```{r}
+fits_ls <- lapply(list(0.5, 1, 2, 4, 8, 16),
+                  function(bw) ksmooth(Auto76$horsepower, Auto76$mpg, kernel = "normal", bandwidth = bw, range.x = range(G)))
+
+preds_ls <- lapply(fits_ls, function(fit) fit$y)
+
+plot_preds_ls <- 
+  preds_ls %>% 
+  as.data.frame() %>% 
+  cbind(., fits_ls[[1]]$x) %>%
+  set_colnames(c(paste0("y", 1:6), "x")) %>%
+  pivot_longer(cols = matches("y"),
+               names_to = "bandwidth",
+               values_to = "pred") %>% 
+  select(c(x, bandwidth, pred))
+
+Auto76 %>% 
+  ggplot(aes(y = mpg, x = horsepower)) +
+  geom_point() +
+  geom_line(data = plot_preds_ls, 
+            aes(y = pred, x = x, colour = bandwidth),
+            size = 0.75) +
+  xlim(45, 200) +
+  ylim(10, 50)
+```
+
+Bandwidth: The kernels are scaled so that their quartiles are at 0.25*bandwidth (From the documentation).
+
+As the bandwidth increases, the line gets smoother. In the low bandwidth = 0.5, 1, 2 (y1, y2, y3), we can see a huge peak just to include that one point at around `horsepower = 130`. This behaviour quickly disappears for the higher bandwidths, and for the best of the bunch, bandwidth = 16, the line is nice and smooth, following the dataset through the middle.
+
+### (d) Compare the estimates you obtained in Q1 - Q3. Which approach to estimating `mpg` fits the data best and why?
+
+Below is a plot of one predictor from each question that I believe to be the "best".
+
+```{r}
+cbind(pred2, fit_bs_pred1, G) %>% 
+  set_colnames(c("Q1", "Q2", "horsepower")) %>% 
+  ggplot(aes(x = horsepower)) +
+  geom_point(data = Auto76, 
+             mapping = aes(y = mpg, x = horsepower)) +
+  geom_line(aes(y = Q1, colour = "polynomial"), size = 1.5) + 
+  geom_line(aes(y = Q2, colour = "spline"), size = 1.5) +
+  geom_line(data = plot_preds_ls %>% filter(bandwidth == "y6"),
+            mapping = aes(y = pred, x = x, colour = "kernelreg"),
+            size = 1.5) +
+  scale_color_manual("",
+                     breaks = c("polynomial", 
+                                "spline", 
+                                "kernelreg"),
+                     values = c("dodgerblue",
+                                "brown2",
+                                "green3"))
+```
+
+For data within the domain of the provided dataset, they all likely perform equally well to an extent. However for extrapolation, the kernel regression method seems to be the best, as the other two quickly skyrocket for horsepower $< 50$. The nicest looking is the polynomial, as it is just a parabola fitted to the data, but that means for values greater than the max of the dataset, the polynomial will quickly get huge, which is not what the data implies (greater horsepower -> less mpg). I believe that the kernel regression is the best for the data. Even though it looks slightly overfit due to it not being very smooth, this won't contribute to too much error. 
+
+
+## Question 4 
+
+Consider the `Auto76` data from Q1, and the variables `mpg`, `displacement`, `horsepower`, `weight`, `acceleration`, and `year`.
+
+Scale the data, and work with this for the question.
+
+```{r}
+Auto76_sc <- 
+  Auto76[, 1:6] %>% 
+  scale() %>% 
+  as.data.frame()
+```
+
+### (a) For the scaled data and all variables listed at the beginning of the question, carry out k-means and clustering for k=2 to 6, using the best of 20 runs for each k. Display the between- and total within-cluster variablilities in a graph with k=2 to 6 on the x-axis.
+
+```{r}
+clus_km <- lapply(2:6, function(k) kmeans(Auto76_sc, k, nstart = 20))
+
+clus_km %>% 
+  map_dfr(`[`, c("tot.withinss", "betweenss")) %>% 
+  add_column(x = 2:6) %>% 
+  pivot_longer(cols = c("tot.withinss", "betweenss"),
+               names_to = "what",
+               values_to = "ss") %>%
+  ggplot(aes(x = x, y = ss, colour = what)) +
+    geom_line() +
+    geom_point(size = 1.5)
+  
+```
+
+### (b) Use hierarchichal clustering with Euclidean distance and conplete linkage and show the dendrogram. Also display the results in a cluster level table which shows the first 9 levels.
+
+```{r}
+clus_hc_ec <- hclust(dist(Auto76_sc), method="complete")
+plot(clus_hc_ec, main="Euclidean+Complete Dendrogram", xlab="", sub="", labels = F)
+```
+
+```{r}
+cat("Euclidean+Complete Cluster-Level Table\n\n")
+cutree(clus_hc_ec, k = 1:9) %>% 
+  as.data.frame() %>%
+  pivot_longer(cols = everything(), 
+               names_to = "level",
+               values_to = "cluster") %>% 
+  table() %>% 
+  t()
+```
+
+### (c) Repeat part (c) for the single linkage and for the centroid linkage - with the Euclidean distance in each case.
+
+*I will assume that this question wants me to repeat part (b), not part (c)*
+
+```{r}
+clus_hc_es <- hclust(dist(Auto76_sc), method="single")
+plot(clus_hc_es, main="Euclidean+Single Dendrogram", 
+     xlab="", sub="", labels = F)
+
+clus_hc_ed <- hclust(dist(Auto76_sc), method="centroid")
+plot(clus_hc_ed, main="Euclidean+Centroid Dendrogram", 
+     xlab="", sub="", labels = F)
+```
+
+```{r}
+cat("Euclidean+Single Cluster-Level Table\n\n")
+cutree(clus_hc_es, k = 1:9) %>% 
+  as.data.frame() %>%
+  pivot_longer(cols = everything(), 
+               names_to = "level",
+               values_to = "cluster") %>% 
+  table() %>% 
+  t()
+
+cat("\n\n\nEuclidean+Centroid Cluster-Level Table\n\n")
+cutree(clus_hc_ed, k = 1:9) %>% 
+  as.data.frame() %>%
+  pivot_longer(cols = everything(), 
+               names_to = "level",
+               values_to = "cluster") %>% 
+  table() %>% 
+  t()
+```
+
+### (d) Compare and discuss the results of the clustering approaches used in this question. Your comparisons should include relevant tables which show the membership similarity/differences between the two methods.
+
+Underneath is a cross tablulation of the complete linkage `hclust` and the centroid linkage, showing that there is very little similarity between the two: 
+
+```{r}
+list(Complete = cutree(clus_hc_ec, k = 9),
+     Centroid = cutree(clus_hc_ed, k = 9)) %>% 
+  do.call(table, .)
+```
+
+And similarly for the complete vs. the single:
+
+```{r}
+list(Complete = cutree(clus_hc_ec, k = 9),
+     Single = cutree(clus_hc_es, k = 9)) %>% 
+  do.call(table, .)
+```
+
+And there is not much similarity between the single and the centroid past the 2nd level either. Both of the non-complete `hclust`'s result in a lot of singletons, a large cluster 1, and a smaller cluster 2.
+
+```{r}
+list(Centroid = cutree(clus_hc_ed, k = 9),
+     Single = cutree(clus_hc_es, k = 9)) %>% 
+  do.call(table, .)
+```
+
+Just by looking at the complete linkage dendrogram, it looks like 5 clusters is the optimal amount, cleanly separating large chunks of the data, and the distances required to go from 5 to 4 clusters is longer than going from 6 to 5. Therefore, I will compare the 5 cluster `hclust` to the 5 cluster `kmeans`
+
+Below is a comparison between the complete linkage hierarchical clustering, and the kmeans clustering from (a).
+
+```{r}
+list(`k-means` = clus_km[[4]]$cluster,
+     hclust = cutree(clus_hc_ec, k = 5)) %>% 
+  do.call(table, .)
+```
+
+Consider the above table, In each row there is a single value that is much higher than the rest, except for one. In this case the row is split by about half, meaning that hclust placed a lot of the values in that kmeans cluster into a different cluster. Overall however they match reasonably well, with 3/5 clusters being pretty much identical, one being too small and one being too big.
+
+### (e) 
+
+I believe that the k-means clustering algorithm is the best for this data, in particular at 5 clusters, since at 6 the clusters stop being reasonably well balanced out in terms of size. Also there is strong diminishing returns in the TWSS in more than 5 clusters as shown in Q4(a).
+
+Hierarchical works well too, but the clusters aren't as evenly balanced, and as shown below, they have a higher total within sum of squares.
+
+```{r}
+hc <- cutree(clus_hc_ec, k = 4)
+auto_c <- scale(Auto76_sc, scale = F)
+
+WSS <- sapply(split(auto_c, hc), function(x) sum(scale(x, scale = F)^2))
+
+cat("Total within sum of squares for hclust: ", sum(WSS), "\n\n")
+
+cat("Total within sum of squares for kmeans: ", clus_km[[4]]$tot.withinss, "\n\n")
+```
+
+
+
+
+
+
+
+
+
+
