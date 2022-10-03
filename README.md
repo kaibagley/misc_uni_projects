@@ -9,6 +9,10 @@ Chatbot trained on Microsoft Frames dataset, and deployed on telegram. Pretty ba
 * Task 1: Two NLP tasks: Document Classification and Entity Recognition. Using the US Mining Safety Logs data set
 * Task 2: Multiclass Document Classification using the `ACTIVITY_CD` labels as classes, and continue to use `NARRATIVE` as the documents.
 
+## `various_r_projects`
+
+Some R assignments, worksheets aren't included.
+
 ## `synonym_finder`
 
 Python code for finding synonyms in a corpus of text
